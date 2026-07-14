@@ -1,0 +1,49 @@
+import { useMemo, useState } from 'react';
+import { useStore } from '../store';
+import { centroid, circlePolyline, transformPolyline } from '../geometry/polygon';
+import { sheetToDxf } from '../export/dxf';
+import { sheetToSvg } from '../export/svg';
+import { downloadBlob } from '../utils/files';
+import { exportAll } from '../export/bundle';
+
+function d(points: {x:number;y:number}[], closed = true) {
+  return points.map((p,i)=>`${i?'L':'M'}${p.x.toFixed(3)},${p.y.toFixed(3)}`).join(' ') + (closed?' Z':'');
+}
+
+export function SheetsView({ projectName }: { projectName: string }) {
+  const { result, settings, sourceAsset, selectedPartId, dispatch } = useStore();
+  const [page, setPage] = useState(0);
+  const parts = useMemo(() => result?.layers.flatMap(l => l.parts) ?? [], [result]);
+  if (!result?.sheets.length) return <div className="viewport empty-state"><strong>No sheets yet</strong><span>Generate slices and nesting first.</span></div>;
+  const index = Math.min(page, result.sheets.length - 1);
+  const sheet = result.sheets[index];
+  const exportSheet = (kind: 'dxf'|'svg') => {
+    const text = kind === 'dxf' ? sheetToDxf(sheet, parts, settings) : sheetToSvg(sheet, parts, settings);
+    downloadBlob(new Blob([text], { type: kind === 'dxf' ? 'application/dxf' : 'image/svg+xml' }), `${projectName || 'stackcarve'}_sheet_${String(index+1).padStart(2,'0')}.${kind}`);
+  };
+  return <div className="sheets-view">
+    <div className="sheet-toolbar">
+      <div className="pager"><button onClick={()=>setPage(Math.max(0,index-1))} disabled={index===0}>←</button><b>Sheet {index+1} / {result.sheets.length}</b><button onClick={()=>setPage(Math.min(result.sheets.length-1,index+1))} disabled={index===result.sheets.length-1}>→</button></div>
+      <div className="export-actions"><button onClick={()=>exportSheet('dxf')}>DXF</button><button onClick={()=>exportSheet('svg')}>SVG</button><button className="primary" onClick={()=>exportAll(projectName,result,settings,sourceAsset)}>Export ZIP</button></div>
+    </div>
+    <div className="sheet-stage">
+      <svg viewBox={`0 0 ${sheet.width} ${sheet.height}`} aria-label={`Sheet ${index+1}`}>
+        <rect x="0" y="0" width={sheet.width} height={sheet.height} className="sheet-outline"/>
+        <g transform={`translate(0 ${sheet.height}) scale(1 -1)`}>
+          {sheet.placements.map(pl => {
+            const part = parts.find(p=>p.id===pl.partId)!;
+            const t=(poly:{x:number;y:number}[])=>transformPolyline(poly,pl.x,pl.y,pl.rotation);
+            return <g key={pl.partId} className={part.id===selectedPartId?'part selected':'part'} onClick={()=>dispatch({type:'selectPart',id:part.id})}>
+              <path className="outer" d={d(t(part.outer))}/>
+              {[...part.structuralHoles,...part.hollowCuts].map((h,i)=><path className="inner" d={d(t(h))} key={`h${i}`}/>)}
+              {part.dowels.map((hole,i)=><path className="dowel" d={d(t(circlePolyline(hole,hole.diameter/2,settings.chordTolerance)))} key={`d${i}`}/>)}
+              {(part.etch?.polylines??[]).map((line,i)=><path className="etch" d={d(t(line),false)} key={`e${i}`}/>)}
+            </g>;
+          })}
+        </g>
+        {sheet.placements.map(pl=>{const part=parts.find(p=>p.id===pl.partId)!;const c=transformPolyline([centroid(part.outer)],pl.x,pl.y,pl.rotation)[0];return <text key={`t-${part.id}`} x={c.x} y={sheet.height-c.y} className="sheet-label">{part.label}</text>})}
+      </svg>
+    </div>
+    <div className="sheet-stats"><span>{sheet.placements.length} parts</span><span>{(sheet.utilization*100).toFixed(1)}% material utilization</span><span>{settings.sheetWidth} × {settings.sheetHeight} in</span></div>
+  </div>;
+}
