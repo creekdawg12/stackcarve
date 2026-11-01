@@ -99,5 +99,11 @@ export const STOCK_SHEET_AREA = 48 * 96;
 /** Hugging Face model ids for the in-browser photo tools. */
 export const AI_MODELS = {
   depth: 'onnx-community/depth-anything-v2-small',
-  cutout: 'briaai/RMBG-1.4'
+  /** Tried in order until one loads and returns a usable matte. */
+  cutout: [
+    { id: 'briaai/RMBG-1.4', label: 'RMBG-1.4', strategy: 'matting-manual', license: 'non-commercial' },
+    { id: 'onnx-community/BiRefNet_lite', label: 'BiRefNet lite', strategy: 'pipeline', license: 'MIT' },
+    { id: 'Xenova/modnet', label: 'MODNet (portraits)', strategy: 'pipeline', license: 'Apache-2.0' }
+  ]
 } as const;
+export type CutoutCandidate = (typeof AI_MODELS.cutout)[number];

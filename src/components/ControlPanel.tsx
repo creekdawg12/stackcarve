@@ -144,7 +144,7 @@ export function ControlPanel({ projectName, setProjectName }: { projectName: str
       dispatch({type:'mask',mask:m});
       const floor = reliefBase.source === 'depth' ? suggestFloor(reliefBase, m, settings.relief) : settings.relief.depthFloor;
       if (floor !== settings.relief.depthFloor) setRelief({depthFloor:floor});
-      dispatch({type:'busy',label:null,progress:100,status:`Subject cut out on ${out.device}. Wall plane set to ${floor.toFixed(2)} so the subject uses the full relief depth. Paint over anything the cutout missed in the Photo tab.`});
+      dispatch({type:'busy',label:null,progress:100,status:`Subject cut out with ${out.model} on ${out.device}. Wall plane set to ${floor.toFixed(2)} so the subject uses the full relief depth. Check the edges in the Photo tab and paint over anything it missed.`});
     } catch(e) { dispatch({type:'busy',label:null,status:`Cutout failed: ${e instanceof Error?e.message:String(e)}. The model downloads from huggingface.co and cdn.jsdelivr.net on first use; check the connection and try again.`}); }
   };
 
@@ -231,7 +231,7 @@ export function ControlPanel({ projectName, setProjectName }: { projectName: str
         <label className="drop"><input type="file" accept="image/png,image/jpeg,image/webp" onChange={e=>e.target.files?.[0]&&loadPhoto(e.target.files[0])}/><b>Load a photo</b><span>{sourceAsset?.kind==='image'?sourceAsset.name:'Head-on, filling the frame, plain background'}</span></label>
         <div className="btn-row"><button className={depthDone?'done':'primary'} disabled={!reliefBase} onClick={runDepth}>{depthDone?'✓ Depth ready (redo)':'1. Estimate depth (AI)'}</button><button className={mask?'done':'primary'} disabled={!reliefBase} onClick={runCutout}>{mask?'✓ Cut out (redo)':'2. Cut out subject (AI)'}</button></div>
         <div className="btn-row"><button disabled={!reliefBase} onClick={thresholdMask}>Mask from threshold</button><button disabled={!mask} onClick={clearMask}>Clear mask</button></div>
-        <p className="note">Models download once (roughly 50 to 150 MB total) and run on this computer. Paint the mask in the Photo tab. The cutout model (RMBG-1.4) is licensed for non-commercial use.</p></>}
+        <p className="note">Models download once (roughly 50 to 150 MB total) and run on this computer. Paint the mask in the Photo tab. Cutout tries RMBG-1.4 first (licensed for non-commercial use), then BiRefNet (MIT), then MODNet.</p></>}
       {settings.inputMode==='ai'&&<><label className="drop"><input type="file" accept="image/png,image/jpeg" onChange={e=>{const f=e.target.files?.[0];if(f){setAiImage(f);loadPhoto(f)}}}/><b>Load statue photo</b><span>{aiImage?.name??(sourceAsset?.kind==='image'?sourceAsset.name:'No image loaded')}</span></label><button className="primary full" onClick={generateAi}>Generate GLB with Meshy</button></>}
     </Section>
 

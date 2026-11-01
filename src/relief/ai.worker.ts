@@ -5,7 +5,7 @@
  *   cutout -> RMBG-1.4 background removal (non-commercial licence)
  * Models download from the Hugging Face Hub on first use and are cached by the browser.
  */
-import type { AiRequest, AiResponse } from './ai';
+import type { AiRequest, AiResponse, CutoutSpec } from './ai';
 
 type Transformers = typeof import('@huggingface/transformers');
 type Device = 'webgpu' | 'wasm';
@@ -82,31 +82,93 @@ async function runDepth(id: string, blob: Blob, model: string) {
   throw lastError ?? new Error('Depth estimation failed.');
 }
 
-async function runCutout(id: string, blob: Blob, model: string) {
+/** Load-time failures mean the candidate model is unusable here; move to the next model, not the next device. */
+function isLoadFailure(err: unknown) {
+  const msg = String((err as Error)?.message ?? err);
+  return /not found|404|Unsupported model type|Could not locate|Unauthorized|401|403|No `image_processor_type`|Unknown image_processor_type|Failed to fetch|NetworkError|Load failed/i.test(msg);
+}
+
+const RMBG_PROCESSOR = {
+  do_normalize: true, do_pad: false, do_rescale: true, do_resize: true,
+  image_mean: [0.5, 0.5, 0.5], image_std: [1, 1, 1], resample: 2, rescale_factor: 1 / 255,
+  size: { width: 1024, height: 1024 }
+};
+
+/**
+ * Matting models whose config.json declares a type this library does not know (RMBG-1.4):
+ * load the weights as a generic encoder, run them by hand, and read the single-channel matte.
+ */
+async function runMattingManual(id: string, image: unknown, device: Device, dtype: string, reqId: string, label: string) {
+  const tf = await transformers();
+  const key = `manual|${id}|${device}|${dtype}`;
+  if (!pipelines.has(key)) {
+    const p = (async () => {
+      const model = await (tf.AutoModel as unknown as { from_pretrained: (m: string, o: Record<string, unknown>) => Promise<unknown> })
+        .from_pretrained(id, { config: { model_type: 'modnet' }, device, dtype, progress_callback: progressReporter(reqId, label) });
+      let processor: unknown;
+      try {
+        processor = await (tf.AutoImageProcessor as unknown as { from_pretrained: (m: string, o: Record<string, unknown>) => Promise<unknown> }).from_pretrained(id, {});
+      } catch {
+        processor = new (tf.ImageProcessor as unknown as new (c: Record<string, unknown>) => unknown)(RMBG_PROCESSOR);
+      }
+      return { model, processor };
+    })();
+    pipelines.set(key, p);
+    p.catch(() => pipelines.delete(key));
+  }
+  const { model, processor } = await pipelines.get(key) as { model: Record<string, unknown>; processor: (img: unknown) => Promise<{ pixel_values: unknown }> };
+  const { pixel_values } = await processor(image);
+  const session = (model.sessions as Record<string, { inputNames: string[]; outputNames: string[] }>)['model'];
+  const inputs = session.inputNames.includes('pixel_values') ? { pixel_values } : { [session.inputNames[0]]: pixel_values };
+  const out = await (model as unknown as (i: Record<string, unknown>) => Promise<Record<string, unknown>>)(inputs);
+  let tensor = out[session.outputNames[0]] as { dims: number[]; data: ArrayLike<number>; min: () => { item: () => number }; max: () => { item: () => number }; sigmoid: () => unknown; mul: (n: number) => { to: (t: string) => unknown }; unsqueeze: (d: number) => unknown; [k: number]: unknown };
+  // Batch dimension off: expect [1, H, W] (channel, height, width) for RawImage.fromTensor.
+  if (tensor.dims.length === 4) tensor = (tensor as unknown as Record<number, typeof tensor>)[0];
+  if (tensor.dims.length === 2) tensor = tensor.unsqueeze(0) as typeof tensor;
+  const lo = tensor.min().item(), hi = tensor.max().item();
+  if (lo < -1e-3 || hi > 1 + 1e-3) tensor = tensor.sigmoid() as typeof tensor;
+  const img = image as { width: number; height: number };
+  const matte = await (tf.RawImage.fromTensor(tensor.mul(255).to('uint8') as never) as unknown as { resize: (w: number, h: number) => Promise<{ data: Uint8Array | Uint8ClampedArray; width: number; height: number; channels: number }> }).resize(img.width, img.height);
+  return matte;
+}
+
+async function runCutout(id: string, blob: Blob, candidates: CutoutSpec[]) {
   const tf = await transformers();
   const image = await tf.RawImage.fromBlob(blob);
-  const attempts: { device: Device; dtype: string }[] = hasWebGpu()
+  const devices: { device: Device; dtype: string }[] = hasWebGpu()
     ? [{ device: 'webgpu', dtype: 'fp16' }, { device: 'webgpu', dtype: 'fp32' }, { device: 'wasm', dtype: 'q8' }]
     : [{ device: 'wasm', dtype: 'q8' }];
   let lastError: unknown = null;
-  for (const a of attempts) {
-    try {
-      const pipe = await getPipeline('background-removal', model, a.device, a.dtype, id, 'Cutout') as (img: unknown) => Promise<{ width: number; height: number; channels: number; data: Uint8Array | Uint8ClampedArray }>;
-      post({ id, kind: 'progress', progress: 99, status: `Cutout: running on ${a.device}…` });
-      const out = await pipe(image);
-      const n = out.width * out.height;
-      const alpha = new Uint8Array(n);
-      if (out.channels === 4) for (let i = 0; i < n; i++) alpha[i] = out.data[i * 4 + 3];
-      else if (out.channels === 1) for (let i = 0; i < n; i++) alpha[i] = out.data[i];
-      else throw new Error(`Unexpected cutout output with ${out.channels} channels`);
-      let on = 0;
-      for (const v of alpha) if (v > 127) on++;
-      if (on === 0 || on === n) throw new Error('Cutout returned an empty mask');
-      post({ id, kind: 'cutout', width: out.width, height: out.height, alpha, device: a.device }, [alpha.buffer]);
-      return;
-    } catch (err) {
-      lastError = err;
-      post({ id, kind: 'progress', progress: 1, status: `Cutout on ${a.device}/${a.dtype} failed (${(err as Error).message ?? err}); trying the next option…` });
+  for (const cand of candidates) {
+    for (const a of devices) {
+      try {
+        post({ id, kind: 'progress', progress: 1, status: `Cutout: loading ${cand.label} on ${a.device}…` });
+        let width: number, height: number, channels: number, data: Uint8Array | Uint8ClampedArray;
+        if (cand.strategy === 'matting-manual') {
+          const matte = await runMattingManual(cand.id, image, a.device, a.dtype, id, `Cutout (${cand.label})`);
+          ({ width, height, channels, data } = matte);
+        } else {
+          const pipe = await getPipeline('background-removal', cand.id, a.device, a.dtype, id, `Cutout (${cand.label})`) as (img: unknown) => Promise<{ width: number; height: number; channels: number; data: Uint8Array | Uint8ClampedArray }>;
+          post({ id, kind: 'progress', progress: 99, status: `Cutout: running ${cand.label} on ${a.device}…` });
+          ({ width, height, channels, data } = await pipe(image));
+        }
+        const n = width * height;
+        const alpha = new Uint8Array(n);
+        if (channels === 4) for (let i = 0; i < n; i++) alpha[i] = data[i * 4 + 3];
+        else if (channels === 1) for (let i = 0; i < n; i++) alpha[i] = data[i];
+        else if (channels === 3) for (let i = 0; i < n; i++) alpha[i] = data[i * 3];
+        else throw new Error(`Unexpected cutout output with ${channels} channels`);
+        let on = 0;
+        for (const v of alpha) if (v > 127) on++;
+        if (on < n * 0.005 || on > n * 0.995) throw new Error(`${cand.label} returned an empty mask`);
+        post({ id, kind: 'cutout', width, height, alpha, device: a.device, model: cand.label }, [alpha.buffer]);
+        return;
+      } catch (err) {
+        lastError = err;
+        const msg = (err as Error).message ?? String(err);
+        post({ id, kind: 'progress', progress: 1, status: `Cutout: ${cand.label} on ${a.device}/${a.dtype} failed (${msg.slice(0, 140)}); trying the next option…` });
+        if (isLoadFailure(err)) break; // this model will not load here at all; next candidate
+      }
     }
   }
   throw lastError ?? new Error('Background removal failed.');
@@ -116,7 +178,7 @@ self.onmessage = async (e: MessageEvent<AiRequest>) => {
   const req = e.data;
   try {
     if (req.kind === 'depth') await runDepth(req.id, req.blob, req.model);
-    else if (req.kind === 'cutout') await runCutout(req.id, req.blob, req.model);
+    else if (req.kind === 'cutout') await runCutout(req.id, req.blob, req.candidates);
   } catch (err) {
     post({ id: req.id, kind: 'error', message: err instanceof Error ? err.message : String(err) });
   }
