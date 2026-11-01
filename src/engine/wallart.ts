@@ -41,14 +41,17 @@ export function silhouetteOfLayers(layers: SliceLayer[]): Polyline[] {
  * Front silhouette of a slab stack as seen from the wall: each slab contributes a rectangle
  * (its x extent × its thickness band). Returned in wall coordinates (x across, y up).
  */
-export function slabSilhouette(layers: SliceLayer[], thickness: number): Polyline[] {
+export function slabSilhouette(layers: SliceLayer[], thickness: number, pitch = thickness, direction: 'horizontal' | 'vertical' = 'horizontal'): Polyline[] {
   const rects: Polyline[] = [];
+  const bridge = Math.max(1e-4, (pitch - thickness) / 2 + 1e-4); // close the gaps so the plate is one piece
   layers.forEach((layer, i) => {
     for (const part of layer.parts) {
       if (part.role === 'backer') continue;
       const b = bounds(part.outer);
       if (b.width <= 0) continue;
-      rects.push(rect(b.minX, i * thickness - 1e-4, b.maxX, (i + 1) * thickness + 1e-4));
+      const s0 = i * pitch - bridge, s1 = i * pitch + thickness + bridge;
+      // Backer drawing frame: x across the wall (same mirror as horizontal slabs), y up the wall.
+      rects.push(direction === 'horizontal' ? rect(b.minX, s0, b.maxX, s1) : rect(-s1, b.minX, -s0, b.maxX));
     }
   });
   return rects.length ? unionPolygons(rects) : [];
@@ -92,7 +95,12 @@ export function placeRods(layers: SliceLayer[], options: {
   holeDiameter: number;
   edgeClearance: number;
   thickness: number;
+  /** Distance from one slab's start to the next (thickness plus gap). */
+  pitch?: number;
+  gap?: number;
 }): RodPlacement {
+  const pitch = options.pitch ?? options.thickness;
+  const gap = options.gap ?? 0;
   const warnings: WarningItem[] = [];
   const r = options.holeDiameter / 2;
   const clearance = r + options.edgeClearance;
@@ -174,7 +182,7 @@ export function placeRods(layers: SliceLayer[], options: {
         to = i;
       }
     }
-    if (from >= 0) rods.push({ columnId, x, y: yRod, offBack: yRod - options.backY, holeDiameter: options.holeDiameter, fromLayer: from, toLayer: to, length: (to - from + 1) * options.thickness });
+    if (from >= 0) rods.push({ columnId, x, y: yRod, offBack: yRod - options.backY, holeDiameter: options.holeDiameter, fromLayer: from, toLayer: to, length: (to - from) * pitch + options.thickness, spacerCount: gap > 0 ? to - from : 0, spacerLength: gap });
   });
 
   let two = 0, one = 0;

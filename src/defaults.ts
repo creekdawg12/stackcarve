@@ -14,7 +14,9 @@ export const DEFAULT_SETTINGS: ProjectSettings = {
     basePlate: true,
     backZoneDepth: 1,
     rodHoleDiameter: 0.40625,
-    backerPlate: false
+    backerPlate: false,
+    slabDirection: 'horizontal',
+    slabGap: 0
   },
   wallThickness: 0.75,
   overlapMargin: 0.5,
@@ -36,6 +38,7 @@ export const DEFAULT_SETTINGS: ProjectSettings = {
   allowRotate90: true,
   nestInCutouts: true,
   relief: {
+    source: 'depth',
     invert: false,
     blackPoint: 0,
     whitePoint: 1,
@@ -44,7 +47,8 @@ export const DEFAULT_SETTINGS: ProjectSettings = {
     backgroundThreshold: 0.08,
     minIslandArea: 0.15,
     finishedWidth: 24,
-    useDepthModel: false
+    depthFloor: 0,
+    baseDepth: 1
   },
   ai: {
     provider: 'meshy',
@@ -79,3 +83,9 @@ export const SHEET_PRESETS: { label: string; width: number; height: number }[] =
 
 /** Area of one 4 × 8 ft stock sheet in square inches. */
 export const STOCK_SHEET_AREA = 48 * 96;
+
+/** Hugging Face model ids for the in-browser photo tools. */
+export const AI_MODELS = {
+  depth: 'onnx-community/depth-anything-v2-small',
+  cutout: 'briaai/RMBG-1.4'
+} as const;

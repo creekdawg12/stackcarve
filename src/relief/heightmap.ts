@@ -1,4 +1,4 @@
-import type { Point2, Polyline, ReliefSettings } from '../types';
+import type { Point2, Polyline, ReliefBase, ReliefSettings } from '../types';
 import { area, simplifyRdp } from '../geometry/polygon';
 
 export interface HeightmapData {
@@ -6,6 +6,8 @@ export interface HeightmapData {
   height: number;
   values: Float32Array<ArrayBufferLike>;
   previewUrl: string;
+  /** Cutout mask when one was used: 0 = background. */
+  mask?: Uint8Array;
 }
 
 function gaussianKernel(radius: number) {
@@ -36,7 +38,8 @@ function blur(values: Float32Array, width: number, height: number, radius: numbe
   return out;
 }
 
-export async function buildHeightmap(file: File, settings: ReliefSettings, maxDimension = 512): Promise<HeightmapData> {
+/** Downscale an image file to the working grid and return it as RGBA pixels. */
+export async function readPhoto(file: Blob, maxDimension = 512) {
   const bitmap = await createImageBitmap(file);
   const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height));
   const width = Math.max(2, Math.round(bitmap.width * scale));
@@ -45,25 +48,118 @@ export async function buildHeightmap(file: File, settings: ReliefSettings, maxDi
   canvas.width = width; canvas.height = height;
   const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
   ctx.drawImage(bitmap, 0, 0, width, height);
-  const data = ctx.getImageData(0, 0, width, height);
-  let values: Float32Array<ArrayBufferLike> = new Float32Array(width * height);
-  const span = Math.max(1e-6, settings.whitePoint - settings.blackPoint);
+  return { width, height, rgba: ctx.getImageData(0, 0, width, height).data, sourceWidth: bitmap.width, sourceHeight: bitmap.height };
+}
+
+/** Brightness as depth: the legacy source. Light = high. */
+export async function buildLuminanceBase(file: Blob, maxDimension = 512): Promise<ReliefBase> {
+  const { width, height, rgba } = await readPhoto(file, maxDimension);
+  const values = new Float32Array(width * height);
   for (let i = 0; i < values.length; i++) {
     const j = i * 4;
-    let v = (0.2126 * data.data[j] + 0.7152 * data.data[j + 1] + 0.0722 * data.data[j + 2]) / 255;
+    values[i] = (0.2126 * rgba[j] + 0.7152 * rgba[j + 1] + 0.0722 * rgba[j + 2]) / 255;
+  }
+  return { source: 'luminance', width, height, values };
+}
+
+/** Bilinear resample of a single-channel grid to a new size. */
+export function resampleGrid(values: ArrayLike<number>, width: number, height: number, newWidth: number, newHeight: number): Float32Array {
+  const out = new Float32Array(newWidth * newHeight);
+  for (let y = 0; y < newHeight; y++) {
+    const sy = newHeight > 1 ? (y / (newHeight - 1)) * (height - 1) : 0;
+    const y0 = Math.floor(sy), y1 = Math.min(height - 1, y0 + 1), fy = sy - y0;
+    for (let x = 0; x < newWidth; x++) {
+      const sx = newWidth > 1 ? (x / (newWidth - 1)) * (width - 1) : 0;
+      const x0 = Math.floor(sx), x1 = Math.min(width - 1, x0 + 1), fx = sx - x0;
+      const a = values[y0 * width + x0], b = values[y0 * width + x1], c = values[y1 * width + x0], d = values[y1 * width + x1];
+      out[y * newWidth + x] = (a * (1 - fx) + b * fx) * (1 - fy) + (c * (1 - fx) + d * fx) * fy;
+    }
+  }
+  return out;
+}
+
+/** Normalise raw model depth so the closest point is 1 and the farthest 0. */
+export function normalizeDepth(values: Float32Array): Float32Array {
+  let min = Infinity, max = -Infinity;
+  for (const v of values) { if (!Number.isFinite(v)) continue; if (v < min) min = v; if (v > max) max = v; }
+  const span = max - min;
+  const out = new Float32Array(values.length);
+  if (!Number.isFinite(span) || span <= 0) return out;
+  for (let i = 0; i < values.length; i++) out[i] = Number.isFinite(values[i]) ? (values[i] - min) / span : 0;
+  return out;
+}
+
+export interface ComposeOptions {
+  settings: ReliefSettings;
+  /** 0 = background, anything else = part of the piece. Same size as the base. */
+  mask?: Uint8Array | null;
+  /** Skip the preview image (tests and workers). */
+  preview?: boolean;
+}
+
+/**
+ * Turn a raw base and an optional cutout mask into the heightmap the slicer consumes.
+ * Inside the silhouette, values are at least just above the background threshold so the
+ * base plate and slabs follow the mask exactly; outside they are 0.
+ */
+export function composeHeightmap(base: ReliefBase, options: ComposeOptions): HeightmapData {
+  const { settings } = options;
+  const { width, height } = base;
+  const span = Math.max(1e-6, settings.whitePoint - settings.blackPoint);
+  const floor = Math.max(0, Math.min(0.95, settings.depthFloor));
+  let values: Float32Array<ArrayBufferLike> = new Float32Array(width * height);
+  for (let i = 0; i < values.length; i++) {
+    let v = base.values[i];
+    if (settings.invert) v = 1 - v;
     v = Math.max(0, Math.min(1, (v - settings.blackPoint) / span));
     v = Math.pow(v, Math.max(0.05, settings.gamma));
-    if (settings.invert) v = 1 - v;
+    v = Math.max(0, (v - floor) / (1 - floor));
     values[i] = v;
   }
   values = blur(values, width, height, settings.blurPx);
-  for (let i = 0; i < values.length; i++) {
-    const c = Math.round(values[i] * 255);
-    data.data[i * 4] = data.data[i * 4 + 1] = data.data[i * 4 + 2] = c;
-    data.data[i * 4 + 3] = 255;
+  const mask = options.mask;
+  const insideMin = Math.min(0.999, settings.backgroundThreshold + 0.002);
+  if (mask) {
+    for (let i = 0; i < values.length; i++) values[i] = mask[i] ? Math.max(insideMin, values[i]) : 0;
   }
-  ctx.putImageData(data, 0, 0);
-  return { width, height, values, previewUrl: canvas.toDataURL('image/png') };
+  let previewUrl = '';
+  if (options.preview !== false && typeof document !== 'undefined') {
+    const canvas = document.createElement('canvas');
+    canvas.width = width; canvas.height = height;
+    const ctx = canvas.getContext('2d')!;
+    const img = ctx.createImageData(width, height);
+    for (let i = 0; i < values.length; i++) {
+      const inside = mask ? mask[i] !== 0 : values[i] >= settings.backgroundThreshold;
+      const c = Math.round(values[i] * 255);
+      if (inside) { img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = c; }
+      else { img.data[i * 4] = 28; img.data[i * 4 + 1] = 38; img.data[i * 4 + 2] = 52; }
+      img.data[i * 4 + 3] = 255;
+    }
+    ctx.putImageData(img, 0, 0);
+    previewUrl = canvas.toDataURL('image/png');
+  }
+  return { width, height, values, previewUrl, mask: mask ?? undefined };
+}
+
+/** Legacy one-shot helper: brightness base composed with the current settings and no mask. */
+export async function buildHeightmap(file: File, settings: ReliefSettings, maxDimension = 512): Promise<HeightmapData> {
+  const base = await buildLuminanceBase(file, maxDimension);
+  return composeHeightmap(base, { settings });
+}
+
+/** Resample a mask or alpha channel (0 to 255) to the base grid and threshold it. */
+export function maskFromAlpha(alpha: Uint8Array | Uint8ClampedArray, width: number, height: number, newWidth: number, newHeight: number, threshold = 128): Uint8Array {
+  const resampled = resampleGrid(alpha, width, height, newWidth, newHeight);
+  const out = new Uint8Array(newWidth * newHeight);
+  for (let i = 0; i < out.length; i++) out[i] = resampled[i] >= threshold ? 255 : 0;
+  return out;
+}
+
+/** Mask from the depth itself: everything below the threshold is background. */
+export function maskFromThreshold(base: ReliefBase, threshold: number): Uint8Array {
+  const out = new Uint8Array(base.values.length);
+  for (let i = 0; i < out.length; i++) out[i] = base.values[i] >= threshold ? 255 : 0;
+  return out;
 }
 
 type Segment = [Point2, Point2];

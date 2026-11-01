@@ -2,6 +2,7 @@ import type { BuildMode, MeshModel, Part2D, PipelineResult, Polyline, ProjectSet
 import { area, bounds } from '../geometry/polygon';
 import { prepareGeometry, regionsFromLoops, sectionGeometry, type SectionRegion } from '../mesh/slice';
 import { marchingSquares, type HeightmapData } from '../relief/heightmap';
+import { slabsFromHeightmap } from '../relief/slabs';
 import { applyHollowing } from './hollow';
 import { intersectPolygons, offsetPolygons } from '../geometry/clipper';
 import { placeDowels } from './dowels';
@@ -72,23 +73,47 @@ export async function runPipeline(input: {
   const { settings } = input;
   const t = settings.materialThickness;
   const relief = settings.inputMode === 'relief';
-  const mode: BuildMode = relief ? 'terraced' : settings.buildMode;
+  const mode: BuildMode = relief ? (settings.buildMode === 'slabs' ? 'slabs' : 'terraced') : settings.buildMode;
   const wallArt = mode !== 'statue';
+  const gap = mode === 'slabs' ? Math.max(0, settings.wallArt.slabGap) : 0;
+  const pitch = t + gap;
+  const slabDirection = settings.wallArt.slabDirection;
   const sections: SectionRegion[][] = [];
   const warnings: WarningItem[] = [];
   let achievedHeight = 0;
   let achievedDepth = 0;
+  let stackExtent = 0;
   let backY = 0; // slabs: drawing y of the flat back edge
 
   if (relief) {
     if (!input.heightmap) throw new Error('Load a photo before generating relief slices.');
-    const layerCount = Math.max(1, Math.round(settings.targetHeight / t));
-    achievedHeight = layerCount * t;
-    achievedDepth = achievedHeight;
-    for (let i = 0; i < layerCount; i++) {
-      const terrace = settings.relief.backgroundThreshold + (1 - settings.relief.backgroundThreshold) * (i / Math.max(1, layerCount - 1));
-      const loops = marchingSquares(input.heightmap, terrace, settings.relief.finishedWidth, Math.max(0.01, settings.minFeature * 0.25), settings.relief.minIslandArea);
-      sections.push(regionsFromLoops(loops));
+    if (mode === 'slabs') {
+      const r = slabsFromHeightmap(input.heightmap, {
+        finishedWidth: settings.relief.finishedWidth,
+        reliefDepth: settings.targetHeight,
+        baseDepth: Math.min(settings.relief.baseDepth, settings.targetHeight),
+        thickness: t,
+        gap,
+        direction: slabDirection,
+        backgroundThreshold: settings.relief.backgroundThreshold,
+        simplifyTolerance: Math.max(0.005, settings.minFeature * 0.2),
+        minFeature: settings.minFeature,
+        minIslandArea: settings.relief.minIslandArea
+      });
+      sections.push(...r.sections);
+      backY = 0;
+      achievedDepth = settings.targetHeight;
+      stackExtent = r.stackExtent;
+      achievedHeight = slabDirection === 'horizontal' ? r.stackExtent : r.finishedHeight;
+    } else {
+      const layerCount = Math.max(1, Math.round(settings.targetHeight / t));
+      achievedHeight = layerCount * t;
+      achievedDepth = achievedHeight;
+      for (let i = 0; i < layerCount; i++) {
+        const terrace = settings.relief.backgroundThreshold + (1 - settings.relief.backgroundThreshold) * (i / Math.max(1, layerCount - 1));
+        const loops = marchingSquares(input.heightmap, terrace, settings.relief.finishedWidth, Math.max(0.01, settings.minFeature * 0.25), settings.relief.minIslandArea);
+        sections.push(regionsFromLoops(loops));
+      }
     }
   } else {
     if (!input.mesh) throw new Error('Load or generate a mesh before slicing.');
@@ -125,12 +150,18 @@ export async function runPipeline(input: {
           warnings.push({ id: 'depth-clamped', severity: 'info', message: `Relief depth clamped to the model depth of ${modelDepth.toFixed(2)} in.` });
         }
       } else {
-        const layerCount = Math.max(1, Math.round(settings.targetHeight / t));
-        achievedHeight = layerCount * t;
+        // Horizontal slabs are Y sections stacked bottom to top; vertical slabs are X sections
+        // stacked from the viewer's left to right. Either way the drawing y is model Z (depth).
+        const axis = slabDirection === 'horizontal' ? 'Y' : 'X';
+        const ext = axisExtent(box, axis);
+        const span = ext.max - ext.min;
+        const layerCount = Math.max(1, Math.round((span + gap) / pitch));
+        stackExtent = layerCount * pitch - gap;
+        achievedHeight = slabDirection === 'horizontal' ? stackExtent : settings.targetHeight;
         achievedDepth = keepDepth;
-        backY = backZ; // drawing y for axis Y slices is model Z
+        backY = backZ;
         for (let i = 0; i < layerCount; i++) {
-          const regions = sectionGeometry(g, box.min.y + (i + 0.5) * t, 'Y', simplify);
+          const regions = sectionGeometry(g, ext.min + i * pitch + t / 2, axis, simplify);
           sections.push(keepDepth < modelDepth - 1e-6 ? clipRegionsToBack(regions, backY) : regions);
         }
         if (keepDepth >= modelDepth - 1e-6) {
@@ -156,7 +187,7 @@ export async function runPipeline(input: {
 
   // Wall art: slabs or layers that fall entirely behind the back plane do not exist. Trim them
   // from the ends so numbering starts at the first real piece.
-  if (wallArt && !relief) {
+  if (wallArt && (!relief || mode === 'slabs')) {
     let first = 0, last = sections.length - 1;
     while (first <= last && !sections[first].length) first++;
     while (last >= first && !sections[last].length) last--;
@@ -164,9 +195,13 @@ export async function runPipeline(input: {
     if (dropped > 0 && last >= first) {
       sections.splice(last + 1);
       sections.splice(0, first);
-      if (mode === 'slabs') achievedHeight = sections.length * t;
-      else achievedDepth = sections.length * t;
-      warnings.push({ id: 'trimmed-layers', severity: 'info', message: `${dropped} ${mode === 'slabs' ? 'slab' : 'layer'}${dropped === 1 ? '' : 's'} at the ends had nothing to cut (behind the back plane or too thin) and ${dropped === 1 ? 'was' : 'were'} dropped. Finished ${mode === 'slabs' ? 'height' : 'depth'} is ${(sections.length * t).toFixed(2)} in.` });
+      if (mode === 'slabs') {
+        stackExtent = sections.length * pitch - gap;
+        if (slabDirection === 'horizontal') achievedHeight = stackExtent;
+      } else achievedDepth = sections.length * t;
+      const what = mode === 'slabs' ? (slabDirection === 'horizontal' ? 'height' : 'width') : 'depth';
+      const size = mode === 'slabs' ? stackExtent : sections.length * t;
+      warnings.push({ id: 'trimmed-layers', severity: 'info', message: `${dropped} ${mode === 'slabs' ? 'slab' : 'layer'}${dropped === 1 ? '' : 's'} at the ends had nothing to cut (behind the back plane or too thin) and ${dropped === 1 ? 'was' : 'were'} dropped. Finished ${what} is ${size.toFixed(2)} in.` });
     }
   }
   for (let i = 0; i < sections.length; i++) {
@@ -193,6 +228,9 @@ export async function runPipeline(input: {
     }
   }
 
+  if (mode === 'slabs' && gap > 0 && settings.hollowEnabled) {
+    warnings.push({ id: 'gap-hollow', severity: 'info', message: `Slabs are gapped ${gap.toFixed(3)} in, so hollow voids can be seen through the gaps from the side. Turn hollowing off for a clean look, or keep it to save wood.` });
+  }
   applyHollowing(layers, {
     enabled: settings.hollowEnabled,
     wall: settings.wallThickness,
@@ -206,7 +244,7 @@ export async function runPipeline(input: {
 
   let rods: RodInfo[] = [];
   if (mode === 'slabs') {
-    const placed = placeRods(layers, { backY, zoneDepth: settings.wallArt.backZoneDepth, holeDiameter: settings.wallArt.rodHoleDiameter, edgeClearance: settings.dowelEdgeClearance, thickness: t });
+    const placed = placeRods(layers, { backY, zoneDepth: settings.wallArt.backZoneDepth, holeDiameter: settings.wallArt.rodHoleDiameter, edgeClearance: settings.dowelEdgeClearance, thickness: t, pitch, gap });
     rods = placed.rods;
     warnings.push(...placed.warnings);
   } else {
@@ -215,7 +253,7 @@ export async function runPipeline(input: {
 
   // Slabs: optional silhouette backer plate for hanging hardware, cut from the same stock.
   if (mode === 'slabs' && settings.wallArt.backerPlate && layers.length) {
-    const outline = slabSilhouette(layers, t).flatMap(p => offsetPolygons([p], -0.25));
+    const outline = slabSilhouette(layers, t, pitch, slabDirection).flatMap(p => offsetPolygons([p], -0.25));
     if (outline.length) {
       const regions = regionsFromLoops(outline);
       const backerLayer: SliceLayer = { index: layers.length, z: 0, thickness: t, parts: [] };
@@ -265,6 +303,9 @@ export async function runPipeline(input: {
     generatedAt: new Date().toISOString(),
     buildMode: mode,
     rods,
-    stockSheets
+    stockSheets,
+    pitch,
+    slabDirection,
+    stackExtent
   };
 }

@@ -20,16 +20,33 @@ export interface SourceAsset {
   sizeBytes?: number;
 }
 
+/** Where the photo's depth comes from: pixel brightness, or the in-browser depth model. */
+export type ReliefSource = 'luminance' | 'depth';
+export type SlabDirection = 'horizontal' | 'vertical';
+
 export interface ReliefSettings {
+  source: ReliefSource;
   invert: boolean;
   blackPoint: number;
   whitePoint: number;
   gamma: number;
   blurPx: number;
+  /** Values below this are background when no cutout mask exists. */
   backgroundThreshold: number;
   minIslandArea: number;
   finishedWidth: number;
-  useDepthModel: boolean;
+  /** Depth (0 to 1, after the curve) at which the wall plane sits. Anything deeper is cut away. */
+  depthFloor: number;
+  /** Slabs from a photo: minimum depth in inches inside the silhouette, so every slab has a back to glue and drill. */
+  baseDepth: number;
+}
+
+/** Raw normalised photo depth before the curve, 1 = closest to the viewer. */
+export interface ReliefBase {
+  source: ReliefSource;
+  width: number;
+  height: number;
+  values: Float32Array;
 }
 
 export interface AiSettings {
@@ -53,6 +70,10 @@ export interface WallArtSettings {
   rodHoleDiameter: number;
   /** Slabs: add a silhouette backer plate for hanging hardware. */
   backerPlate: boolean;
+  /** Slabs: stacked bottom to top (horizontal) or left to right (vertical). */
+  slabDirection: SlabDirection;
+  /** Slabs: open gap between neighbouring slabs, in inches. 0 = touching. */
+  slabGap: number;
 }
 
 export interface ProjectSettings {
@@ -148,8 +169,11 @@ export interface RodInfo {
   /** Zero-based layer indices of the lowest and highest slab carrying this rod. */
   fromLayer: number;
   toLayer: number;
-  /** Suggested rod length in inches (slabs spanned × thickness). */
+  /** Suggested rod length in inches: slabs spanned at the stacking pitch. */
   length: number;
+  /** Spacer sleeves needed on this rod when slabs are gapped (one per gap spanned). */
+  spacerCount: number;
+  spacerLength: number;
 }
 
 export interface SliceLayer {
@@ -200,6 +224,18 @@ export interface PipelineResult {
   stockSheets: number;
   /** Depth of the finished piece off the wall (wall art) or footprint depth (statue). */
   achievedDepth: number;
+  /** Distance between the start of one slice and the next: thickness plus any gap. */
+  pitch: number;
+  slabDirection: SlabDirection;
+  /** Slabs: total extent along the stacking direction, gaps included. */
+  stackExtent: number;
+}
+
+export interface StoredRelief {
+  /** Base64 of uint8 depth (0 to 255) at width × height. */
+  base?: { source: ReliefSource; width: number; height: number; data: string };
+  /** Base64 of uint8 mask (0 or 255) at the same size. */
+  mask?: { width: number; height: number; data: string };
 }
 
 export interface StackCarveProject {
@@ -208,6 +244,7 @@ export interface StackCarveProject {
   settings: ProjectSettings;
   sourceAsset: SourceAsset | null;
   placements: Placement[];
+  relief?: StoredRelief;
   createdAt: string;
   updatedAt: string;
 }

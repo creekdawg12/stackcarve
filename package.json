@@ -1,7 +1,7 @@
 {
   "name": "stackcarve",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,6 +10,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@huggingface/transformers": "^4.3.2",
     "@vitejs/plugin-react": "^6.0.3",
     "clipper-lib": "^6.4.2",
     "jszip": "^3.10.1",
@@ -25,5 +26,9 @@
     "typescript": "latest",
     "vite": "^8.1.4",
     "vitest": "latest"
+  },
+  "overrides": {
+    "onnxruntime-node": "file:./stubs/empty",
+    "sharp": "file:./stubs/empty"
   }
 }

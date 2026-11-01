@@ -25,7 +25,11 @@ export async function exportAll(name: string, result: PipelineResult, settings: 
     ''
   ];
   if (result.buildMode === 'slabs') {
-    notes.push('Slabs stack bottom (1) to top with their flat back edges against a straight board.');
+    const gap = result.pitch - settings.materialThickness;
+    notes.push(result.slabDirection === 'vertical'
+      ? `Vertical slabs: stack 1 (viewer's left) to ${pieces} (right), flat back edges against a straight board.`
+      : `Horizontal slabs: stack 1 (bottom) to ${pieces} (top), flat back edges against a straight board.`);
+    if (gap > 1e-6) notes.push(`Slabs are spaced ${gap.toFixed(3)} in apart. Slide one spacer sleeve (inner diameter to suit the rod, ${gap.toFixed(3)} in long) onto each rod between neighbouring slabs. Spacer totals: ${result.rods.map(r => `${r.columnId} × ${r.spacerCount}`).join(', ') || 'none'}.`);
     for (const r of result.rods) notes.push(`Rod ${r.columnId}: x = ${r.x.toFixed(3)} in in slab coordinates, ${r.offBack.toFixed(3)} in off the back edge, hole Ø ${r.holeDiameter.toFixed(3)} in, runs through slabs ${r.fromLayer + 1} to ${r.toLayer + 1}, cut ${r.length.toFixed(2)} in long.`);
     if (!result.rods.length) notes.push('No rods fit: glue slabs by eye against the back edge.');
   } else if (result.buildMode === 'terraced') {

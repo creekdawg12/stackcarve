@@ -43,9 +43,11 @@ export function SlicesViewport() {
     const pinMat = new THREE.MeshStandardMaterial({ color: 0x6aa487, roughness: .5 });
     const rodMat = new THREE.MeshStandardMaterial({ color: 0x9fb4c4, roughness: .35, metalness: .6 });
     const clickable: THREE.Mesh[] = [];
-    const stackStep = (layer: { index: number; thickness: number }) => layer.index * layer.thickness * (1 + explode);
-    const slices = result.layers.filter(l => l.parts.some(p => p.role !== 'backer'));
     const t = result.layers[0]?.thickness ?? 0.25;
+    const pitchE = result.pitch * (1 + explode);
+    const stackStep = (layer: { index: number }) => layer.index * pitchE;
+    const slices = result.layers.filter(l => l.parts.some(p => p.role !== 'backer'));
+    const vertical = mode === 'slabs' && result.slabDirection === 'vertical';
     let backY = Infinity;
 
     for (const layer of slices) for (const part of layer.parts) {
@@ -63,13 +65,21 @@ export function SlicesViewport() {
         group.add(pin);
       }
     }
+    const sleeveMat = new THREE.MeshStandardMaterial({ color: 0x4f5d68, roughness: .6 });
     for (const rod of result.rods) {
-      const z0 = rod.fromLayer * t * (1 + explode);
-      const z1 = rod.toLayer * t * (1 + explode) + t;
+      const z0 = rod.fromLayer * pitchE;
+      const z1 = rod.toLayer * pitchE + t;
       const cyl = new THREE.Mesh(new THREE.CylinderGeometry(rod.holeDiameter * .42, rod.holeDiameter * .42, z1 - z0, 20), rodMat);
       cyl.rotation.x = Math.PI / 2;
       cyl.position.set(rod.x, rod.y, (z0 + z1) / 2);
       group.add(cyl);
+      if (rod.spacerLength > 0) for (let i = rod.fromLayer; i < rod.toLayer; i++) {
+        const g0 = i * pitchE + t, g1 = (i + 1) * pitchE;
+        const sleeve = new THREE.Mesh(new THREE.CylinderGeometry(rod.holeDiameter * .75, rod.holeDiameter * .75, Math.max(0.01, g1 - g0), 16), sleeveMat);
+        sleeve.rotation.x = Math.PI / 2;
+        sleeve.position.set(rod.x, rod.y, (g0 + g1) / 2);
+        group.add(sleeve);
+      }
     }
 
     // Slabs: the backer plate stands in the wall plane just behind the flat back edges.
@@ -77,8 +87,16 @@ export function SlicesViewport() {
     if (mode === 'slabs' && backer.length && Number.isFinite(backY)) {
       for (const part of backer) {
         const geo = new THREE.ExtrudeGeometry(shapeForPart(part), { depth: t, bevelEnabled: false, curveSegments: 8 });
-        geo.scale(1, 1 + explode, 1);
-        geo.rotateX(Math.PI / 2);
+        // Backer drawing frame: horizontal slabs (x across, y up); vertical slabs (x = -stack, y = up).
+        // Stretch the stacking axis by the explode factor, then rotate the plate into the wall plane of
+        // the group frame, where the stacking axis is z and depth is y.
+        if (vertical) {
+          geo.scale(1 + explode, 1, 1);
+          geo.applyMatrix4(new THREE.Matrix4().makeBasis(new THREE.Vector3(0, 0, -1), new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, -1, 0)));
+        } else {
+          geo.scale(1, 1 + explode, 1);
+          geo.applyMatrix4(new THREE.Matrix4().makeBasis(new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, -1, 0)));
+        }
         geo.translate(0, backY, 0);
         const m = new THREE.Mesh(geo, part.id === selectedPartId ? selected : backerMat);
         m.userData.partId = part.id; m.userData.layerIndex = part.layerIndex; m.receiveShadow = true; group.add(m); clickable.push(m);
@@ -103,6 +121,8 @@ export function SlicesViewport() {
     }
     // Terraced: stand the stack up so the wall is vertical and the layers come toward the viewer.
     if (mode === 'terraced') group.rotation.x = Math.PI / 2;
+    // Vertical slabs: drawing x is up the wall and the stack runs to the viewer's right.
+    if (vertical) group.rotation.y = -Math.PI / 2;
 
     const worldBox = new THREE.Box3().setFromObject(group); const sphere = worldBox.getBoundingSphere(new THREE.Sphere()); orbit.target.copy(sphere.center);
     const d = Math.max(8, sphere.radius * 2.6);
@@ -123,6 +143,6 @@ export function SlicesViewport() {
   if (!result) return <div className="viewport empty-state"><strong>No slices yet</strong><span>Generate the project from the Model tab.</span></div>;
   return <div className="viewport slices-wrap" ref={host}>
     <label className="explode"><span>Exploded view</span><input type="range" min="0" max="2" step="0.05" value={explode} onChange={e=>setExplode(Number(e.target.value))}/><b>{explode.toFixed(2)}×</b></label>
-    {result.buildMode!=='statue'&&<div className="viewport-hint">{result.buildMode==='slabs'?'Slabs stack bottom to top; rods run through the hidden strip at the back.':'Layer 1 sits on the wall; terraces step toward you.'}</div>}
+    {result.buildMode!=='statue'&&<div className="viewport-hint">{result.buildMode==='slabs'?(result.slabDirection==='vertical'?'Slabs stack left to right; rods run horizontally through the hidden strip at the back.':'Slabs stack bottom to top; rods run through the hidden strip at the back.'):'Layer 1 sits on the wall; terraces step toward you.'}</div>}
   </div>;
 }

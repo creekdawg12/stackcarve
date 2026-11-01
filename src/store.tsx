@@ -1,6 +1,5 @@
 import React, { createContext, useContext, useMemo, useReducer } from 'react';
-import type { AppTab, MeshModel, PipelineResult, ProjectSettings, SourceAsset, StackCarveProject } from './types';
-import type { HeightmapData } from './relief/heightmap';
+import type { AppTab, MeshModel, PipelineResult, ProjectSettings, ReliefBase, SourceAsset, StackCarveProject } from './types';
 import { DEFAULT_SETTINGS } from './defaults';
 
 interface State {
@@ -8,7 +7,10 @@ interface State {
   settings: ProjectSettings;
   sourceAsset: SourceAsset | null;
   mesh: MeshModel | null;
-  heightmap: HeightmapData | null;
+  /** Raw photo depth (brightness or AI) before the curve. */
+  reliefBase: ReliefBase | null;
+  /** Cutout mask at the base's size, 0 = background. Null = no mask (use the threshold). */
+  mask: Uint8Array | null;
   result: PipelineResult | null;
   selectedLayer: number;
   selectedPartId: string | null;
@@ -22,7 +24,8 @@ type Action =
   | { type: 'settings'; value: Partial<ProjectSettings> }
   | { type: 'source'; asset: SourceAsset | null; mesh?: MeshModel | null }
   | { type: 'mesh'; mesh: MeshModel | null }
-  | { type: 'heightmap'; heightmap: HeightmapData | null }
+  | { type: 'reliefBase'; base: ReliefBase | null; mask?: Uint8Array | null }
+  | { type: 'mask'; mask: Uint8Array | null }
   | { type: 'result'; result: PipelineResult | null }
   | { type: 'selectLayer'; index: number }
   | { type: 'selectPart'; id: string | null }
@@ -34,13 +37,14 @@ const initialState: State = {
   settings: DEFAULT_SETTINGS,
   sourceAsset: null,
   mesh: null,
-  heightmap: null,
+  reliefBase: null,
+  mask: null,
   result: null,
   selectedLayer: 0,
   selectedPartId: null,
   busy: null,
   progress: 0,
-  status: 'Load a mesh or image to begin.'
+  status: 'Load a mesh or photo to begin.'
 };
 
 function reducer(state: State, action: Action): State {
@@ -49,7 +53,8 @@ function reducer(state: State, action: Action): State {
     case 'settings': return { ...state, settings: { ...state.settings, ...action.value }, result: null };
     case 'source': return { ...state, sourceAsset: action.asset, mesh: action.mesh ?? state.mesh, result: null };
     case 'mesh': return { ...state, mesh: action.mesh, result: null };
-    case 'heightmap': return { ...state, heightmap: action.heightmap, result: null };
+    case 'reliefBase': return { ...state, reliefBase: action.base, mask: action.mask === undefined ? state.mask : action.mask, result: null };
+    case 'mask': return { ...state, mask: action.mask, result: null };
     case 'result': return { ...state, result: action.result, selectedLayer: 0, selectedPartId: null };
     case 'selectLayer': return { ...state, selectedLayer: action.index };
     case 'selectPart': return { ...state, selectedPartId: action.id };

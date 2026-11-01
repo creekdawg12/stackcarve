@@ -1,0 +1,7 @@
+{
+  "name": "stackcarve-empty-stub",
+  "version": "1.0.0",
+  "description": "Stands in for node-only native packages (onnxruntime-node, sharp) that the browser build never loads.",
+  "main": "index.js",
+  "license": "MIT"
+}
