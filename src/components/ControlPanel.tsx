@@ -2,7 +2,7 @@ import { useMemo, useRef, useState } from 'react';
 import { useStore } from '../store';
 import { NumberField } from './NumberField';
 import { loadMeshFile, loadMeshFromArrayBuffer } from '../mesh/loadMesh';
-import { buildLuminanceBase, composeHeightmap, maskFromAlpha, maskFromThreshold, normalizeDepth, resampleGrid } from '../relief/heightmap';
+import { buildLuminanceBase, composeHeightmap, maskFromAlpha, maskFromThreshold, normalizeDepth, resampleGrid, suggestFloor } from '../relief/heightmap';
 import { aiSupported, estimateDepth, removeBackground, webGpuAvailable } from '../relief/ai';
 import { fileToDataUrl, dataUrlToFile, downloadBlob } from '../utils/files';
 import { runPipeline } from '../engine/pipeline';
@@ -103,7 +103,9 @@ export function ControlPanel({ projectName, setProjectName }: { projectName: str
       const out = await removeBackground(file,(progress,status)=>dispatch({type:'busy',label:'Cutting out subject',progress,status}));
       const m = maskFromAlpha(out.alpha, out.width, out.height, reliefBase.width, reliefBase.height);
       dispatch({type:'mask',mask:m});
-      dispatch({type:'busy',label:null,progress:100,status:`Subject cut out on ${out.device}. Paint over anything it missed in the Photo tab.`});
+      const floor = reliefBase.source === 'depth' ? suggestFloor(reliefBase, m, settings.relief) : settings.relief.depthFloor;
+      if (floor !== settings.relief.depthFloor) setRelief({depthFloor:floor});
+      dispatch({type:'busy',label:null,progress:100,status:`Subject cut out on ${out.device}. Wall plane set to ${floor.toFixed(2)} so the subject uses the full relief depth. Paint over anything the cutout missed in the Photo tab.`});
     } catch(e) { dispatch({type:'busy',label:null,status:`Cutout failed: ${e instanceof Error?e.message:String(e)}. The model downloads from huggingface.co and cdn.jsdelivr.net on first use; check the connection and try again.`}); }
   };
 
@@ -210,6 +212,8 @@ export function ControlPanel({ projectName, setProjectName }: { projectName: str
       {reliefBase&&reliefBase.source!==settings.relief.source&&<p className="note">{reliefBase.source==='depth'?'Showing AI depth.':'Brightness is loaded; press Estimate depth to switch to AI depth.'}</p>}
       <label className="toggle"><input type="checkbox" checked={settings.relief.invert} onChange={e=>setRelief({invert:e.target.checked})}/><span>Invert (far becomes near)</span></label>
       <NumberField label="Wall plane (depth floor)" value={settings.relief.depthFloor} min={0} max={.95} step={.01} suffix="" onChange={n=>setRelief({depthFloor:Math.max(0,Math.min(.95,n))})}/>
+      <div className="btn-row"><button disabled={!reliefBase} onClick={()=>reliefBase&&setRelief({depthFloor:suggestFloor(reliefBase,mask,{...settings.relief,depthFloor:0})})}>Fit wall plane to subject</button><button disabled={!reliefBase||settings.relief.depthFloor===0} onClick={()=>setRelief({depthFloor:0})}>Reset to 0</button></div>
+      <p className="note">The wall plane is where the piece meets the wall. Fit it after the cutout so the back of the subject (ears, hairline) sits at the wall and the nose gets the whole relief depth.</p>
       <NumberField label="Black point" value={settings.relief.blackPoint} min={0} max={1} step={.01} suffix="" onChange={n=>setRelief({blackPoint:Math.min(n,settings.relief.whitePoint-.01)})}/>
       <NumberField label="White point" value={settings.relief.whitePoint} min={0} max={1} step={.01} suffix="" onChange={n=>setRelief({whitePoint:Math.max(n,settings.relief.blackPoint+.01)})}/>
       <NumberField label="Gamma (below 1 pushes the nose out)" value={settings.relief.gamma} min={.05} max={5} step={.05} suffix="" onChange={n=>setRelief({gamma:n})}/>

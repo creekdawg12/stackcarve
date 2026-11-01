@@ -102,22 +102,50 @@ export interface ComposeOptions {
  * Inside the silhouette, values are at least just above the background threshold so the
  * base plate and slabs follow the mask exactly; outside they are 0.
  */
+/** Invert, levels and gamma applied to one raw value, before the wall-plane floor. */
+export function curveValue(raw: number, settings: ReliefSettings) {
+  const span = Math.max(1e-6, settings.whitePoint - settings.blackPoint);
+  let v = settings.invert ? 1 - raw : raw;
+  v = Math.max(0, Math.min(1, (v - settings.blackPoint) / span));
+  return Math.pow(v, Math.max(0.05, settings.gamma));
+}
+
+/**
+ * Where the wall plane should sit so the subject uses the whole relief depth: the depth of the
+ * farthest few percent of pixels inside the mask (the back of the ears on a face), not the
+ * background the model also measured.
+ */
+export function suggestFloor(base: ReliefBase, mask: Uint8Array | null, settings: ReliefSettings, percentile = 0.03) {
+  const inside: number[] = [];
+  for (let i = 0; i < base.values.length; i++) {
+    if (mask ? mask[i] : base.values[i] >= settings.backgroundThreshold) inside.push(curveValue(base.values[i], settings));
+  }
+  if (inside.length < 10) return 0;
+  inside.sort((a, b) => a - b);
+  const v = inside[Math.min(inside.length - 1, Math.floor(inside.length * percentile))];
+  return Math.max(0, Math.min(0.9, Math.round(v * 100) / 100));
+}
+
 export function composeHeightmap(base: ReliefBase, options: ComposeOptions): HeightmapData {
   const { settings } = options;
   const { width, height } = base;
-  const span = Math.max(1e-6, settings.whitePoint - settings.blackPoint);
   const floor = Math.max(0, Math.min(0.95, settings.depthFloor));
   let values: Float32Array<ArrayBufferLike> = new Float32Array(width * height);
   for (let i = 0; i < values.length; i++) {
-    let v = base.values[i];
-    if (settings.invert) v = 1 - v;
-    v = Math.max(0, Math.min(1, (v - settings.blackPoint) / span));
-    v = Math.pow(v, Math.max(0.05, settings.gamma));
-    v = Math.max(0, (v - floor) / (1 - floor));
-    values[i] = v;
+    values[i] = Math.max(0, (curveValue(base.values[i], settings) - floor) / (1 - floor));
   }
-  values = blur(values, width, height, settings.blurPx);
   const mask = options.mask;
+  if (mask && settings.blurPx > 0) {
+    // Normalised blur: background pixels carry no weight, so the subject's edge keeps its depth.
+    const weight = new Float32Array(values.length);
+    const weighted = new Float32Array(values.length);
+    for (let i = 0; i < values.length; i++) if (mask[i]) { weight[i] = 1; weighted[i] = values[i]; }
+    const num = blur(weighted, width, height, settings.blurPx);
+    const den = blur(weight, width, height, settings.blurPx);
+    for (let i = 0; i < values.length; i++) values[i] = den[i] > 1e-4 ? num[i] / den[i] : 0;
+  } else {
+    values = blur(values, width, height, settings.blurPx);
+  }
   const insideMin = Math.min(0.999, settings.backgroundThreshold + 0.002);
   if (mask) {
     for (let i = 0; i < values.length; i++) values[i] = mask[i] ? Math.max(insideMin, values[i]) : 0;

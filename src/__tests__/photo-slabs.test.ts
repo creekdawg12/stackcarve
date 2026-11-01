@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_SETTINGS } from '../defaults';
 import { runPipeline } from '../engine/pipeline';
-import { composeHeightmap, maskFromThreshold, normalizeDepth, resampleGrid } from '../relief/heightmap';
+import { composeHeightmap, maskFromThreshold, normalizeDepth, resampleGrid, suggestFloor } from '../relief/heightmap';
 import { slabsFromHeightmap } from '../relief/slabs';
 import { area, bounds } from '../geometry/polygon';
 import type { ProjectSettings, ReliefBase } from '../types';
@@ -44,6 +44,32 @@ describe('photo heightmap tools', () => {
     let lower = 0;
     for (let i = 0; i < mask.length; i++) if (mask[i] && floored.values[i] < map.values[i] - 1e-6) lower++;
     expect(lower).toBeGreaterThan(mask.length * 0.3);
+  });
+});
+
+describe('wall plane fitting', () => {
+  it('puts the floor at the back of the subject, ignoring the background', () => {
+    // Subject depths 0.4 to 1.0 on a background at 0.1 to 0.2.
+    const width = 50, height = 40;
+    const values = new Float32Array(width * height);
+    const mask = new Uint8Array(width * height);
+    for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+      const i = y * width + x;
+      const subject = x >= 10 && x < 40 && y >= 8 && y < 32;
+      mask[i] = subject ? 255 : 0;
+      values[i] = subject ? 0.4 + 0.6 * ((x - 10) / 30) : 0.1 + 0.1 * (y / height);
+    }
+    const base: ReliefBase = { source: 'depth', width, height, values };
+    const floor = suggestFloor(base, mask, relief);
+    expect(floor).toBeGreaterThanOrEqual(0.38);
+    expect(floor).toBeLessThanOrEqual(0.46);
+    const composed = composeHeightmap(base, { settings: { ...relief, depthFloor: floor }, mask, preview: false });
+    // The nose still reaches full depth and the back of the subject is at (or just above) the wall.
+    let max = 0, nearWall = 0, inside = 0;
+    for (let i = 0; i < values.length; i++) if (mask[i]) { inside++; max = Math.max(max, composed.values[i]); if (composed.values[i] <= relief.backgroundThreshold + 0.01) nearWall++; }
+    expect(max).toBeGreaterThan(0.9); // blur within the mask softens the ramp end slightly
+    expect(nearWall).toBeGreaterThan(0);
+    expect(nearWall).toBeLessThan(inside * 0.1);
   });
 });
 
