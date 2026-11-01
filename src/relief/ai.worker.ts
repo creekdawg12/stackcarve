@@ -98,7 +98,7 @@ const RMBG_PROCESSOR = {
  * Matting models whose config.json declares a type this library does not know (RMBG-1.4):
  * load the weights as a generic encoder, run them by hand, and read the single-channel matte.
  */
-async function runMattingManual(id: string, image: unknown, device: Device, dtype: string, reqId: string, label: string) {
+async function runMattingManual(id: string, image: unknown, device: Device, dtype: string, reqId: string, label: string, size: number) {
   const tf = await transformers();
   const key = `manual|${id}|${device}|${dtype}`;
   if (!pipelines.has(key)) {
@@ -116,7 +116,10 @@ async function runMattingManual(id: string, image: unknown, device: Device, dtyp
     pipelines.set(key, p);
     p.catch(() => pipelines.delete(key));
   }
-  const { model, processor } = await pipelines.get(key) as { model: Record<string, unknown>; processor: (img: unknown) => Promise<{ pixel_values: unknown }> };
+  const { model, processor } = await pipelines.get(key) as { model: Record<string, unknown>; processor: ((img: unknown) => Promise<{ pixel_values: unknown }>) & { size?: unknown; image_processor?: { size?: unknown } } };
+  // Matting networks are fully convolutional; a smaller working size trades edge crispness for memory.
+  const target = { width: size, height: size };
+  if (processor.image_processor) processor.image_processor.size = target; else processor.size = target;
   const { pixel_values } = await processor(image);
   const session = (model.sessions as Record<string, { inputNames: string[]; outputNames: string[] }>)['model'];
   const inputs = session.inputNames.includes('pixel_values') ? { pixel_values } : { [session.inputNames[0]]: pixel_values };
@@ -132,7 +135,7 @@ async function runMattingManual(id: string, image: unknown, device: Device, dtyp
   return matte;
 }
 
-async function runCutout(id: string, blob: Blob, candidates: CutoutSpec[]) {
+async function runCutout(id: string, blob: Blob, candidates: CutoutSpec[], size: number) {
   const tf = await transformers();
   const image = await tf.RawImage.fromBlob(blob);
   const devices: { device: Device; dtype: string }[] = hasWebGpu()
@@ -145,10 +148,11 @@ async function runCutout(id: string, blob: Blob, candidates: CutoutSpec[]) {
         post({ id, kind: 'progress', progress: 1, status: `Cutout: loading ${cand.label} on ${a.device}…` });
         let width: number, height: number, channels: number, data: Uint8Array | Uint8ClampedArray;
         if (cand.strategy === 'matting-manual') {
-          const matte = await runMattingManual(cand.id, image, a.device, a.dtype, id, `Cutout (${cand.label})`);
+          const matte = await runMattingManual(cand.id, image, a.device, a.dtype, id, `Cutout (${cand.label})`, size);
           ({ width, height, channels, data } = matte);
         } else {
-          const pipe = await getPipeline('background-removal', cand.id, a.device, a.dtype, id, `Cutout (${cand.label})`) as (img: unknown) => Promise<{ width: number; height: number; channels: number; data: Uint8Array | Uint8ClampedArray }>;
+          const pipe = await getPipeline('background-removal', cand.id, a.device, a.dtype, id, `Cutout (${cand.label})`) as ((img: unknown) => Promise<{ width: number; height: number; channels: number; data: Uint8Array | Uint8ClampedArray }>) & { processor?: { image_processor?: { size?: unknown } } };
+          if (pipe.processor?.image_processor && size < 1024) pipe.processor.image_processor.size = { width: size, height: size };
           post({ id, kind: 'progress', progress: 99, status: `Cutout: running ${cand.label} on ${a.device}…` });
           ({ width, height, channels, data } = await pipe(image));
         }
@@ -178,7 +182,7 @@ self.onmessage = async (e: MessageEvent<AiRequest>) => {
   const req = e.data;
   try {
     if (req.kind === 'depth') await runDepth(req.id, req.blob, req.model);
-    else if (req.kind === 'cutout') await runCutout(req.id, req.blob, req.candidates);
+    else if (req.kind === 'cutout') await runCutout(req.id, req.blob, req.candidates, req.size);
   } catch (err) {
     post({ id: req.id, kind: 'error', message: err instanceof Error ? err.message : String(err) });
   }

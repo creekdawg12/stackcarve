@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { buildChecklist, checklistText } from '../export/checklist';
 import { useStore } from '../store';
 import { centroid, circlePolyline, transformPolyline } from '../geometry/polygon';
@@ -14,27 +14,29 @@ function d(points: {x:number;y:number}[], closed = true) {
 export function SheetsView({ projectName }: { projectName: string }) {
   const { result, settings, sourceAsset, selectedPartId, dispatch } = useStore();
   const [page, setPage] = useState(0);
+  const stageRef = useRef<HTMLDivElement>(null);
   const parts = useMemo(() => result?.layers.flatMap(l => l.parts) ?? [], [result]);
   if (!result?.sheets.length) return <div className="viewport empty-state"><strong>No sheets yet</strong><span>Generate slices and nesting first.</span></div>;
   const index = Math.min(page, result.sheets.length - 1);
   const sheet = result.sheets[index];
+  const view = usePanZoom(stageRef, sheet.width, sheet.height);
   const exportSheet = (kind: 'dxf'|'svg') => {
     const text = kind === 'dxf' ? sheetToDxf(sheet, parts, settings) : sheetToSvg(sheet, parts, settings);
     downloadBlob(new Blob([text], { type: kind === 'dxf' ? 'application/dxf' : 'image/svg+xml' }), `${projectName || 'stackcarve'}_sheet_${String(index+1).padStart(2,'0')}.${kind}`);
   };
   return <div className="sheets-view">
     <div className="sheet-toolbar">
-      <div className="pager"><button onClick={()=>setPage(Math.max(0,index-1))} disabled={index===0}>←</button><b>Sheet {index+1} / {result.sheets.length}</b><button onClick={()=>setPage(Math.min(result.sheets.length-1,index+1))} disabled={index===result.sheets.length-1}>→</button></div>
-      <div className="export-actions"><button onClick={()=>exportSheet('dxf')}>DXF</button><button onClick={()=>exportSheet('svg')}>SVG</button><button className="primary" onClick={()=>exportAll(projectName,result,settings,sourceAsset)}>Export ZIP</button></div>
+      <div className="pager"><button onClick={()=>{setPage(Math.max(0,index-1));view.reset();}} disabled={index===0}>←</button><b>Sheet {index+1} / {result.sheets.length}</b><button onClick={()=>{setPage(Math.min(result.sheets.length-1,index+1));view.reset();}} disabled={index===result.sheets.length-1}>→</button></div>
+      <div className="export-actions"><button onClick={()=>view.zoomBy(1.25)} title="Zoom in">+</button><button onClick={()=>view.zoomBy(0.8)} title="Zoom out">−</button><button onClick={()=>view.reset()} title="Fit the sheet">Fit</button><button onClick={()=>exportSheet('dxf')}>DXF</button><button onClick={()=>exportSheet('svg')}>SVG</button><button className="primary" onClick={()=>exportAll(projectName,result,settings,sourceAsset)}>Export ZIP</button></div>
     </div>
-    <div className="sheet-stage">
-      <svg viewBox={`0 0 ${sheet.width} ${sheet.height}`} aria-label={`Sheet ${index+1}`}>
+    <div className="sheet-stage" ref={stageRef} onPointerDown={view.onPointerDown} onPointerMove={view.onPointerMove} onPointerUp={view.onPointerUp} onPointerCancel={view.onPointerUp} onWheel={view.onWheel} style={{touchAction:'none',cursor:view.dragging?'grabbing':'grab'}}>
+      <svg viewBox={view.viewBox(sheet.width, sheet.height)} aria-label={`Sheet ${index+1}`}>
         <rect x="0" y="0" width={sheet.width} height={sheet.height} className="sheet-outline"/>
         <g transform={`translate(0 ${sheet.height}) scale(1 -1)`}>
           {sheet.placements.map(pl => {
             const part = parts.find(p=>p.id===pl.partId)!;
             const t=(poly:{x:number;y:number}[])=>transformPolyline(poly,pl.x,pl.y,pl.rotation);
-            return <g key={pl.partId} className={part.id===selectedPartId?'part selected':'part'} onClick={()=>dispatch({type:'selectPart',id:part.id})}>
+            return <g key={pl.partId} className={part.id===selectedPartId?'part selected':'part'} onClick={()=>{ if(!view.dragging) dispatch({type:'selectPart',id:part.id}); }}>
               <path className="outer" d={d(t(part.outer))}/>
               {[...part.structuralHoles,...part.hollowCuts].map((h,i)=><path className="inner" d={d(t(h))} key={`h${i}`}/>)}
               {part.dowels.map((hole,i)=><path className="dowel" d={d(t(circlePolyline(hole,hole.diameter/2,settings.chordTolerance)))} key={`d${i}`}/>)}
@@ -77,4 +79,61 @@ function Checklist() {
       })}
     </ol>}
   </div>;
+}
+
+/** Pan and zoom for the sheet drawing: drag or one finger to pan, pinch or wheel to zoom, buttons for the rest. */
+function usePanZoom(stageRef: React.RefObject<HTMLDivElement | null>, width: number, height: number) {
+  const [state, setState] = useState({ scale: 1, cx: 0.5, cy: 0.5 });
+  const [dragging, setDragging] = useState(false);
+  const pointers = useRef(new Map<number, { x: number; y: number }>());
+  const last = useRef<{ x: number; y: number; dist: number } | null>(null);
+  const pad = 0.04;
+
+  const viewBox = (w: number, h: number) => {
+    const vw = (w * (1 + 2 * pad)) / state.scale, vh = (h * (1 + 2 * pad)) / state.scale;
+    const x = state.cx * w - vw / 2, y = state.cy * h - vh / 2;
+    return `${x.toFixed(4)} ${y.toFixed(4)} ${vw.toFixed(4)} ${vh.toFixed(4)}`;
+  };
+  const clampScale = (s: number) => Math.min(12, Math.max(1, s));
+  const zoomBy = (f: number) => setState(st => ({ ...st, scale: clampScale(st.scale * f) }));
+  const reset = () => setState({ scale: 1, cx: 0.5, cy: 0.5 });
+  /** Pixels on screen per sheet inch, for turning pointer motion into pan. */
+  const pxPerIn = () => {
+    const el = stageRef.current; if (!el) return 1;
+    const r = el.getBoundingClientRect();
+    const vw = (width * (1 + 2 * pad)) / state.scale, vh = (height * (1 + 2 * pad)) / state.scale;
+    return Math.min(r.width / vw, r.height / vh);
+  };
+  const onPointerDown = (e: React.PointerEvent) => {
+    (e.currentTarget as Element).setPointerCapture(e.pointerId);
+    pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const pts = [...pointers.current.values()];
+    last.current = pts.length >= 2 ? { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2, dist: Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) } : { x: e.clientX, y: e.clientY, dist: 0 };
+    setDragging(true);
+  };
+  const onPointerMove = (e: React.PointerEvent) => {
+    if (!pointers.current.has(e.pointerId)) return;
+    pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const pts = [...pointers.current.values()];
+    const k = pxPerIn();
+    if (pts.length >= 2) {
+      const mid = { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
+      const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+      const prev = last.current!;
+      setState(st => ({ scale: clampScale(prev.dist ? st.scale * (dist / prev.dist) : st.scale), cx: st.cx - (mid.x - prev.x) / k / width, cy: st.cy - (mid.y - prev.y) / k / height }));
+      last.current = { ...mid, dist };
+    } else {
+      const prev = last.current!;
+      setState(st => ({ ...st, cx: st.cx - (e.clientX - prev.x) / k / width, cy: st.cy - (e.clientY - prev.y) / k / height }));
+      last.current = { x: e.clientX, y: e.clientY, dist: 0 };
+    }
+  };
+  const onPointerUp = (e: React.PointerEvent) => {
+    pointers.current.delete(e.pointerId);
+    const pts = [...pointers.current.values()];
+    last.current = pts.length ? { x: pts[0].x, y: pts[0].y, dist: 0 } : null;
+    if (!pts.length) setDragging(false);
+  };
+  const onWheel = (e: React.WheelEvent) => { zoomBy(e.deltaY < 0 ? 1.15 : 1 / 1.15); };
+  return { viewBox, zoomBy, reset, dragging, onPointerDown, onPointerMove, onPointerUp, onWheel };
 }

@@ -4,7 +4,7 @@ export type CutoutSpec = { id: string; label: string; strategy: 'matting-manual'
 
 export type AiRequest =
   | { id: string; kind: 'depth'; blob: Blob; model: string }
-  | { id: string; kind: 'cutout'; blob: Blob; candidates: CutoutSpec[] };
+  | { id: string; kind: 'cutout'; blob: Blob; candidates: CutoutSpec[]; size: number };
 
 export type AiResponse =
   | { id: string; kind: 'progress'; progress: number; status: string }
@@ -34,19 +34,21 @@ function request<T extends AiResponse['kind']>(req: RequestBody, want: T, onProg
   const id = `ai-${++seq}`;
   const w = getWorker();
   return new Promise((resolve, reject) => {
+    // Models stay resident in GPU and wasm memory while the worker lives. Tablets run out of
+    // memory with two of them loaded, so the worker is dropped after every job; the browser's
+    // cache keeps the downloaded files, so the next run only pays a few seconds of setup.
+    const finish = () => { w.removeEventListener('message', onMessage); w.removeEventListener('error', onError); resetAi(); };
     const onMessage = (e: MessageEvent<AiResponse>) => {
       const msg = e.data;
       if (msg.id !== id) return;
       if (msg.kind === 'progress') { onProgress?.(msg.progress, msg.status); return; }
-      w.removeEventListener('message', onMessage);
-      w.removeEventListener('error', onError);
+      finish();
       if (msg.kind === 'error') reject(new Error(msg.message));
       else if (msg.kind === want) resolve(msg as Extract<AiResponse, { kind: T }>);
       else reject(new Error(`Unexpected worker reply ${msg.kind}`));
     };
     const onError = (e: ErrorEvent) => {
-      w.removeEventListener('message', onMessage);
-      w.removeEventListener('error', onError);
+      finish();
       reject(new Error(e.message || 'The AI worker crashed. Reload the page and try again.'));
     };
     w.addEventListener('message', onMessage);
@@ -61,8 +63,16 @@ export function estimateDepth(blob: Blob, onProgress?: ProgressFn) {
 }
 
 /** Alpha matte of the photo's subject (0 = background) at the photo's native size. */
+/** Tablets and phones get a smaller matte: a quarter of the memory of the full 1024 px pass. */
+export function isLowMemoryDevice() {
+  const nav = navigator as Navigator & { deviceMemory?: number };
+  if (typeof nav.deviceMemory === 'number') return nav.deviceMemory <= 4;
+  return (nav.maxTouchPoints ?? 0) > 1;
+}
+
 export function removeBackground(blob: Blob, onProgress?: ProgressFn) {
-  return request({ kind: 'cutout', blob, candidates: AI_MODELS.cutout.map(c => ({ ...c })) }, 'cutout', onProgress);
+  const size = isLowMemoryDevice() ? 768 : 1024;
+  return request({ kind: 'cutout', blob, candidates: AI_MODELS.cutout.map(c => ({ ...c })), size }, 'cutout', onProgress);
 }
 
 export function aiSupported() {

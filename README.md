@@ -43,7 +43,11 @@ Wall art only shows the front surface, so a depth map of the photo is all the 3D
 
 Models download from the Hugging Face Hub once (roughly 50 to 150 MB in total) and are cached by the browser; the ONNX runtime comes from jsDelivr. Nothing is uploaded anywhere. Shoot the subject head-on, filling the frame, against a plain background.
 
-Depth and mask exist only in the open tab until you save the project; a banner reminds you and the browser asks before closing. Photo depth is relative, so **Relief depth** sets how far the closest point stands off the wall and **Base depth** sets the minimum depth inside the silhouette, which gives every slab a flat back to glue and drill. Saved projects embed the depth and mask so reopening one does not rerun the models.
+Depth and mask are autosaved to the browser (IndexedDB) as you work, so a tab that crashes or reloads offers to restore the session; the project file is still the real save, and a banner reminds you. Each AI model is released from memory as soon as its job is done, and tablets run the cutout at a smaller size, both to stay inside mobile Safari's memory limits. Photo depth is relative, so **Relief depth** sets how far the closest point stands off the wall and **Base depth** sets the minimum depth inside the silhouette, which gives every slab a flat back to glue and drill. Saved projects embed the depth and mask so reopening one does not rerun the models.
+
+### Previews
+
+Slices: drag to orbit, pinch or scroll to zoom, two fingers or right-drag to pan, tap a piece to select it; + / − / Fit buttons top right. The camera holds while you change the exploded view or select pieces. Sheets: drag to pan, pinch or scroll to zoom, + / − / Fit in the toolbar.
 
 ### Slab direction and spacing
 

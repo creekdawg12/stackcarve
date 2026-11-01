@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../store';
 import { NumberField } from './NumberField';
 import { loadMeshFile, loadMeshFromArrayBuffer } from '../mesh/loadMesh';
@@ -10,6 +10,7 @@ import { MeshyProvider } from '../providers/meshy';
 import { decodeRelief, makeProject, parseProject } from '../export/project';
 import { INPUT_PRESETS, LAYER_SOFT_LIMIT, MODE_PRESETS, SHEET_PRESETS, THICKNESS_PRESETS } from '../defaults';
 import { measureOriented } from '../mesh/measure';
+import { clearAutosave, decodeAutosaveRelief, readAutosave, scheduleAutosave, type AutosaveRecord } from '../utils/autosave';
 import type { BuildMode, ProjectSettings, ReliefBase } from '../types';
 
 const MODE_LABEL: Record<BuildMode, string> = { statue: 'Statue', terraced: 'Wall art: terraced', slabs: 'Wall art: slabs' };
@@ -58,6 +59,7 @@ export const PRESETS: { id: string; label: string; hint: string; apply: (s: Proj
 export function ControlPanel({ projectName, setProjectName }: { projectName: string; setProjectName: (s:string)=>void }) {
   const store = useStore();
   const [openSections, setOpenSections] = useState<Record<SectionId, boolean>>(DEFAULT_OPEN);
+  const [restorable, setRestorable] = useState<AutosaveRecord | null>(null);
   const toggle = (id: SectionId) => setOpenSections(o => ({ ...o, [id]: !o[id] }));
   const isOpen = (id: SectionId) => openSections[id];
   const { settings, patchSettings, sourceAsset, mesh, reliefBase, mask, result, dispatch, unsavedAi } = store;
@@ -158,6 +160,25 @@ export function ControlPanel({ projectName, setProjectName }: { projectName: str
     } catch(e) { dispatch({type:'busy',label:null,status:e instanceof Error?e.message:String(e)}); }
   };
 
+  // Crash insurance: keep the photo session in IndexedDB; offer it back after a reload.
+  useEffect(() => {
+    readAutosave().then(rec => { if (rec?.relief?.base) setRestorable(rec); });
+  }, []);
+  useEffect(() => {
+    if (!reliefBase) return;
+    scheduleAutosave({ projectName, settings, sourceAsset, base: reliefBase, mask });
+  }, [projectName, settings, sourceAsset, reliefBase, mask]);
+  const restoreSession = async () => {
+    if (!restorable) return;
+    const { base, mask: m } = decodeAutosaveRelief(restorable);
+    setProjectName(restorable.projectName);
+    dispatch({ type: 'project', project: { schemaVersion: 1, name: restorable.projectName, settings: restorable.settings, sourceAsset: restorable.sourceAsset, placements: [], createdAt: restorable.savedAt, updatedAt: restorable.savedAt } });
+    if (base) dispatch({ type: 'reliefBase', base, mask: m });
+    setRestorable(null);
+    dispatch({ type: 'busy', label: null, status: `Restored the photo session from ${new Date(restorable.savedAt).toLocaleTimeString()}. Save the project to keep it for good.` });
+  };
+  const discardSession = () => { setRestorable(null); void clearAutosave(); };
+
   const depthDone = reliefBase?.source === 'depth';
   const photoSteps = [
     { label: 'Photo', done: !!reliefBase },
@@ -221,7 +242,8 @@ export function ControlPanel({ projectName, setProjectName }: { projectName: str
 
   return <aside className="controls">
     <div className="project-row"><input className="project-name" value={projectName} onChange={e=>setProjectName(e.target.value)} aria-label="Project name"/><button onClick={saveProject}>Save</button><button onClick={()=>projectInput.current?.click()}>Load</button><input ref={projectInput} hidden type="file" accept=".json" onChange={e=>e.target.files?.[0]&&loadProject(e.target.files[0])}/></div>
-    {unsavedAi&&<div className="banner"><span>Depth and mask live only in this tab until you save the project.</span><button onClick={saveProject}>Save now</button></div>}
+    {restorable&&!reliefBase&&<div className="banner restore"><span>Found a photo session from {new Date(restorable.savedAt).toLocaleString([], {hour:'numeric',minute:'2-digit',month:'short',day:'numeric'})} with depth{restorable.relief?.mask?' and mask':''}.</span><button onClick={restoreSession}>Restore</button><button className="quiet" onClick={discardSession}>Discard</button></div>}
+    {unsavedAi&&<div className="banner"><span>Depth and mask are kept in this browser; save the project to keep them for good.</span><button onClick={saveProject}>Save now</button></div>}
     <div className="presets"><span>Start from</span>{PRESETS.map(p=><button key={p.id} className="chip" title={p.hint} onClick={()=>applyPreset(p.id)}>{p.label}</button>)}</div>
 
     <Section id="input" title="Input" summary={settings.inputMode==='mesh'?(mesh?.sourceName??'no mesh'):settings.inputMode==='relief'?(sourceAsset?.name??'no photo'):'AI statue'} open={isOpen('input')} toggle={toggle}><div className="segmented">{(['mesh','relief','ai'] as const).map(m=><button className={settings.inputMode===m?'active':''} key={m} onClick={()=>patchSettings({inputMode:m,...(m==='relief'&&settings.inputMode!=='relief'?{...INPUT_PRESETS.relief,buildMode:settings.buildMode==='statue'?'terraced':settings.buildMode}:{})})}>{m==='mesh'?'Mesh':m==='relief'?'Photo':'AI statue'}</button>)}</div>

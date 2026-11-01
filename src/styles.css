@@ -72,3 +72,11 @@
 .generate{position:static;box-shadow:none}
 .checklist{max-height:min(34vh,330px);min-height:0}
 .checklist.collapsed{max-height:40px;overflow:hidden}
+
+.banner.restore{background:#15291e;border-color:#2f6b4a;color:#d9f2e0}
+.banner.restore button{border-color:#2f6b4a;background:#1d3a2a;color:#d9f2e0}
+.banner button.quiet{background:transparent}
+.view-buttons{position:absolute;right:12px;top:12px;z-index:4;display:flex;gap:4px}
+.view-buttons button{min-width:34px;height:34px;border:1px solid #45515a;background:#111c;color:#e1e8ec;border-radius:7px;font-size:15px;cursor:pointer;padding:0 10px}
+.view-buttons button:hover{border-color:var(--amber)}
+.viewport-hint{max-width:min(92%,760px);text-align:center}
