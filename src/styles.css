@@ -84,3 +84,5 @@
 .busy-overlay .cancel{margin-top:6px;border:1px solid #4c5962;background:#1b2126;color:#dce4e9;border-radius:6px;padding:7px 16px;cursor:pointer;font-size:12px}
 .busy-overlay .cancel:hover{border-color:var(--amber)}
 .busy-overlay span{max-width:min(80%,640px);text-align:center;line-height:1.5}
+
+.viewport canvas{display:block;position:absolute;inset:0;width:100%!important;height:100%!important}

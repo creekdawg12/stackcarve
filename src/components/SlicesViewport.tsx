@@ -218,7 +218,7 @@ export function SlicesViewport() {
     };
     renderer.domElement.addEventListener('pointerdown', onDown);
     renderer.domElement.addEventListener('pointerup', onUp);
-    const resize = () => { const r = el.getBoundingClientRect(); renderer.setSize(r.width, r.height, false); camera.aspect = r.width / Math.max(1, r.height); camera.updateProjectionMatrix(); };
+    const resize = () => { const r = el.getBoundingClientRect(); renderer.setSize(Math.max(1, Math.floor(r.width)), Math.max(1, Math.floor(r.height))); camera.aspect = r.width / Math.max(1, r.height); camera.updateProjectionMatrix(); };
     const ro = new ResizeObserver(resize); ro.observe(el); resize();
     let frame = 0; const animate = () => { frame = requestAnimationFrame(animate); orbit.update(); renderer.render(sc, camera); }; animate();
     return () => {

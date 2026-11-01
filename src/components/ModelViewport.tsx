@@ -73,7 +73,7 @@ export function ModelViewport() {
     }
     const resize = () => {
       const r = el.getBoundingClientRect();
-      renderer.setSize(r.width, r.height, false); camera.aspect = r.width / Math.max(1, r.height); camera.updateProjectionMatrix();
+      renderer.setSize(Math.max(1, Math.floor(r.width)), Math.max(1, Math.floor(r.height))); camera.aspect = r.width / Math.max(1, r.height); camera.updateProjectionMatrix();
     };
     const ro = new ResizeObserver(resize); ro.observe(el); resize();
     let frame = 0;

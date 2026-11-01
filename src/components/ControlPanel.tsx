@@ -37,18 +37,18 @@ function Section({ id, title, summary, open, toggle, children }: { id: SectionId
 export const PRESETS: { id: string; label: string; hint: string; apply: (s: ProjectSettings) => Partial<ProjectSettings> }[] = [
   {
     id: 'plaque', label: 'Face plaque', hint: 'Terraced, 1/4 in, 2.5 in deep',
-    apply: s => ({ buildMode: 'terraced', materialThickness: 0.25, hollowEnabled: true, wallThickness: 0.75, overlapMargin: 0.375, minFeature: 0.25, partGap: 0.3,
+    apply: s => ({ buildMode: 'terraced', materialThickness: 0.25, hollowEnabled: true, wallThickness: 0.75, overlapMargin: 0.375, minFeature: 0.25, partGap: 0.3, targetHeight: s.inputMode === 'relief' ? s.targetHeight : 20,
       relief: { ...s.relief, depth: 2.5, baseDepth: 1 }, wallArt: { ...s.wallArt, slabGap: 0, basePlate: true, reliefDepth: s.inputMode === 'relief' ? s.wallArt.reliefDepth : 6 } })
   },
   {
     id: 'lineart', label: 'Line-art slabs', hint: 'Vertical slabs, 1/4 in gap, hollowing off',
-    apply: s => ({ buildMode: 'slabs', materialThickness: 0.25, hollowEnabled: false, minFeature: 0.25, partGap: 0.3,
-      relief: { ...s.relief, depth: 3, baseDepth: 1 }, wallArt: { ...s.wallArt, slabDirection: 'vertical', slabGap: 0.25, backerPlate: true, backZoneDepth: 1 } })
+    apply: s => ({ buildMode: 'slabs', materialThickness: 0.25, hollowEnabled: false, minFeature: 0.25, partGap: 0.3, targetHeight: s.inputMode === 'relief' ? s.targetHeight : 20,
+      relief: { ...s.relief, depth: 3, baseDepth: 1 }, wallArt: { ...s.wallArt, slabDirection: 'vertical', slabGap: 0.25, backerPlate: true, backZoneDepth: 1, reliefDepth: s.inputMode === 'relief' ? s.wallArt.reliefDepth : 6 } })
   },
   {
     id: 'stack', label: 'Solid slabs', hint: 'Horizontal slabs, touching, rods',
-    apply: s => ({ buildMode: 'slabs', materialThickness: 0.25, hollowEnabled: true, wallThickness: 0.75, overlapMargin: 0.375, minFeature: 0.25, partGap: 0.3,
-      relief: { ...s.relief, depth: 3, baseDepth: 1 }, wallArt: { ...s.wallArt, slabDirection: 'horizontal', slabGap: 0, backerPlate: false } })
+    apply: s => ({ buildMode: 'slabs', materialThickness: 0.25, hollowEnabled: true, wallThickness: 0.75, overlapMargin: 0.375, minFeature: 0.25, partGap: 0.3, targetHeight: s.inputMode === 'relief' ? s.targetHeight : 20,
+      relief: { ...s.relief, depth: 3, baseDepth: 1 }, wallArt: { ...s.wallArt, slabDirection: 'horizontal', slabGap: 0, backerPlate: false, reliefDepth: s.inputMode === 'relief' ? s.wallArt.reliefDepth : 6 } })
   },
   {
     id: 'statue', label: 'Statue', hint: 'Needs a 3D model; 3/4 in, hollow',
@@ -175,6 +175,21 @@ export function ControlPanel({ projectName, setProjectName }: { projectName: str
     dispatch({ type: 'project', project: { schemaVersion: 1, name: restorable.projectName, settings: restorable.settings, sourceAsset: restorable.sourceAsset, placements: [], createdAt: restorable.savedAt, updatedAt: restorable.savedAt } });
     if (base) dispatch({ type: 'reliefBase', base, mask: m });
     setRestorable(null);
+    if (base && restorable.settings.inputMode === 'relief') {
+      // Slices are cheap to rebuild, so bring the session back exactly where it was.
+      dispatch({ type: 'busy', label: 'Restoring session', progress: 10, status: 'Rebuilding slices from the saved depth and mask…' });
+      await new Promise(r => setTimeout(r, 30));
+      try {
+        const map = composeHeightmap(base, { settings: restorable.settings.relief, mask: m, preview: false });
+        const output = await runPipeline({ settings: restorable.settings, mesh: null, heightmap: map });
+        dispatch({ type: 'result', result: output });
+        dispatch({ type: 'busy', label: null, progress: 100, status: `Restored the photo session from ${new Date(restorable.savedAt).toLocaleTimeString()} and rebuilt ${output.layers.length} pieces. Save the project to keep it for good.` });
+        return;
+      } catch (e) {
+        dispatch({ type: 'busy', label: null, status: `Restored the session; regenerate when ready (${e instanceof Error ? e.message : String(e)}).` });
+        return;
+      }
+    }
     dispatch({ type: 'busy', label: null, status: `Restored the photo session from ${new Date(restorable.savedAt).toLocaleTimeString()}. Save the project to keep it for good.` });
   };
   const discardSession = () => { setRestorable(null); void clearAutosave(); };
