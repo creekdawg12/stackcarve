@@ -11,9 +11,18 @@ function axisCoord(v: THREE.Vector3, axis: Axis) {
   return axis === 'X' ? v.x : axis === 'Y' ? v.y : v.z;
 }
 
+/**
+ * Map a 3D point onto the 2D drawing frame of a slice.
+ * Each mapping is a proper rotation (no mirror) that puts the +axis side of the
+ * slice on the machine's top face, so etched marks always end up on the face that
+ * the next layer in stacking order covers.
+ *   X: drawing (x, y) = (Y, Z)   since Y × Z = +X
+ *   Y: drawing (x, y) = (-X, Z)  since -X × Z = +Y
+ *   Z: drawing (x, y) = (X, Y)   since X × Y = +Z
+ */
 function planar(v: THREE.Vector3, axis: Axis): Point2 {
   if (axis === 'X') return { x: v.y, y: v.z };
-  if (axis === 'Y') return { x: v.x, y: v.z };
+  if (axis === 'Y') return { x: -v.x, y: v.z };
   return { x: v.x, y: v.y };
 }
 
@@ -60,6 +69,19 @@ function stitchSegments(segments: [Point2, Point2][], tolerance: number): Polyli
   return loops;
 }
 
+/** Group closed loops into outer/hole regions by area order and centroid containment. */
+export function regionsFromLoops(loops: Polyline[]): SectionRegion[] {
+  const sorted = loops.filter(p => p.length >= 3 && area(p) > 1e-8).sort((a, b) => area(b) - area(a));
+  const regions: SectionRegion[] = [];
+  for (const loop of sorted) {
+    const c = centroid(loop);
+    const parent = regions.find(r => pointInPolygon(c, r.outer));
+    if (parent) parent.holes.push(ensureCW(loop));
+    else regions.push({ outer: ensureCCW(loop), holes: [] });
+  }
+  return regions;
+}
+
 function classifyLoops(loops: Polyline[]): SectionRegion[] {
   const sorted = loops.filter(p => p.length >= 3 && area(p) > 1e-7).sort((a, b) => area(b) - area(a));
   const depth = sorted.map((poly, i) => {
@@ -86,26 +108,48 @@ export function transformedGeometryVertices(
   axis: Axis,
   achievedHeight: number
 ) {
+  return prepareGeometry(geometry, { rotationDeg, scaleAxis: axis, scaleTo: achievedHeight });
+}
+
+/**
+ * Rotate, uniformly scale so the extent along scaleAxis equals scaleTo, optionally
+ * compress depth (Z) toward the front face, then centre the result on the origin.
+ */
+export function prepareGeometry(
+  geometry: THREE.BufferGeometry,
+  options: {
+    rotationDeg: { x: number; y: number; z: number };
+    scaleAxis: Axis;
+    scaleTo: number;
+    depthScale?: number;
+  }
+) {
   const g = geometry.clone();
   const euler = new THREE.Euler(
-    THREE.MathUtils.degToRad(rotationDeg.x),
-    THREE.MathUtils.degToRad(rotationDeg.y),
-    THREE.MathUtils.degToRad(rotationDeg.z),
+    THREE.MathUtils.degToRad(options.rotationDeg.x),
+    THREE.MathUtils.degToRad(options.rotationDeg.y),
+    THREE.MathUtils.degToRad(options.rotationDeg.z),
     'XYZ'
   );
-  const m = new THREE.Matrix4().makeRotationFromEuler(euler);
-  g.applyMatrix4(m);
+  g.applyMatrix4(new THREE.Matrix4().makeRotationFromEuler(euler));
   g.computeBoundingBox();
-  const box = g.boundingBox!;
   const size = new THREE.Vector3();
-  box.getSize(size);
-  const dimension = axis === 'X' ? size.x : axis === 'Y' ? size.y : size.z;
-  const scale = dimension > 0 ? achievedHeight / dimension : 1;
+  g.boundingBox!.getSize(size);
+  const dimension = options.scaleAxis === 'X' ? size.x : options.scaleAxis === 'Y' ? size.y : size.z;
+  const scale = dimension > 0 ? options.scaleTo / dimension : 1;
   g.scale(scale, scale, scale);
   g.computeBoundingBox();
-  const scaledBox = g.boundingBox!;
+  const depthScale = options.depthScale ?? 1;
+  if (depthScale > 0 && Math.abs(depthScale - 1) > 1e-9) {
+    // Compress toward the front face (max Z) so the nose stays where it is.
+    const front = g.boundingBox!.max.z;
+    g.translate(0, 0, -front);
+    g.scale(1, 1, depthScale);
+    g.translate(0, 0, front);
+    g.computeBoundingBox();
+  }
   const center = new THREE.Vector3();
-  scaledBox.getCenter(center);
+  g.boundingBox!.getCenter(center);
   g.translate(-center.x, -center.y, -center.z);
   g.computeBoundingBox();
   return g;

@@ -133,11 +133,16 @@ export function simplifyRdp(points: Polyline, tolerance: number): Polyline {
   return p.filter((_, i) => markers[i] === 1);
 }
 
-export function rotatePoint(p: Point2, rotation: 0 | 90): Point2 {
-  return rotation === 90 ? { x: -p.y, y: p.x } : { ...p };
+export function rotatePoint(p: Point2, rotation: 0 | 90 | 180 | 270): Point2 {
+  switch (rotation) {
+    case 90: return { x: -p.y, y: p.x };
+    case 180: return { x: -p.x, y: -p.y };
+    case 270: return { x: p.y, y: -p.x };
+    default: return { ...p };
+  }
 }
 
-export function transformPolyline(poly: Polyline, x: number, y: number, rotation: 0 | 90): Polyline {
+export function transformPolyline(poly: Polyline, x: number, y: number, rotation: 0 | 90 | 180 | 270): Polyline {
   return poly.map(p => {
     const r = rotatePoint(p, rotation);
     return { x: r.x + x, y: r.y + y };

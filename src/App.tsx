@@ -14,7 +14,7 @@ function Workspace() {
     <header className="topbar">
       <div className="brand"><span className="brand-mark">SC</span><div><b>StackCarve</b><small>Layered CNC sculpture builder</small></div></div>
       <nav>{(['model','slices','sheets'] as const).map(t=><button key={t} className={tab===t?'active':''} onClick={()=>dispatch({type:'tab',value:t})}>{t[0].toUpperCase()+t.slice(1)}</button>)}</nav>
-      <div className="job-summary">{result?<><span>{result.layers.length} layers</span><span>{result.sheets.length} sheets</span><span>{(result.utilization*100).toFixed(1)}% avg.</span></>:<span>48 × 48 in AltMill workspace</span>}</div>
+      <div className="job-summary">{result?<><span>{result.layers.filter(l=>l.parts.some(p=>p.role!=='backer')).length} {result.buildMode==='slabs'?'slabs':'layers'}</span><span>{result.sheets.length} sheets · {result.stockSheets} × 4×8</span><span>{(result.utilization*100).toFixed(1)}% avg.</span>{result.rods.length>0&&<span>{result.rods.length} rod{result.rods.length===1?'':'s'}</span>}</>:<span>48 × 48 in AltMill workspace</span>}</div>
     </header>
     <main>
       <ControlPanel projectName={projectName} setProjectName={setProjectName}/>

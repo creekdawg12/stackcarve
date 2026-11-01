@@ -44,6 +44,11 @@ export function SheetsView({ projectName }: { projectName: string }) {
         {sheet.placements.map(pl=>{const part=parts.find(p=>p.id===pl.partId)!;const c=transformPolyline([centroid(part.outer)],pl.x,pl.y,pl.rotation)[0];return <text key={`t-${part.id}`} x={c.x} y={sheet.height-c.y} className="sheet-label">{part.label}</text>})}
       </svg>
     </div>
-    <div className="sheet-stats"><span>{sheet.placements.length} parts</span><span>{(sheet.utilization*100).toFixed(1)}% material utilization</span><span>{settings.sheetWidth} × {settings.sheetHeight} in</span></div>
+    <div className="sheet-stats"><span>{sheet.placements.length} parts</span><span>{(sheet.utilization*100).toFixed(1)}% material utilization</span><span>{settings.sheetWidth} × {settings.sheetHeight} in</span><span>{result.sheets.length} sheets = {result.stockSheets} × 4×8 stock</span></div>
+    {(result.rods.length>0||result.buildMode!=='statue')&&<div className="assembly">
+      {result.rods.map(r=><span key={r.columnId}><b>{r.columnId}</b> x = {r.x.toFixed(2)} in, {r.offBack.toFixed(2)} in off the back, through slabs {r.fromLayer+1} to {r.toLayer+1}, cut {r.length.toFixed(2)} in long, hole Ø{r.holeDiameter.toFixed(3)} in</span>)}
+      {result.buildMode==='terraced'&&<span>Layer 1 goes against the wall. Pins are short dowels (2 × thickness) pressed into matching holes; every hole is covered by the layer two steps up.</span>}
+      {result.buildMode==='slabs'&&<span>Stack slabs 1 (bottom) to {result.layers.filter(l=>l.parts.some(p=>p.role!=='backer')).length} (top) on the rods with the flat back edges against a straight board, then glue.</span>}
+    </div>}
   </div>;
 }

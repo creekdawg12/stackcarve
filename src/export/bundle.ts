@@ -15,6 +15,26 @@ export async function exportAll(name: string, result: PipelineResult, settings: 
     zip.file(`${safe}_sheet_${n}.svg`, sheetToSvg(sheet, parts, settings));
   });
   zip.file(`${safe}.stackcarve.json`, JSON.stringify(makeProject(name, settings, sourceAsset, result), null, 2));
+  const pieces = result.layers.filter(l => l.parts.some(p => p.role !== 'backer')).length;
+  const notes = [
+    `StackCarve assembly notes — ${name}`,
+    `Mode: ${result.buildMode}`,
+    `Pieces: ${pieces} ${result.buildMode === 'slabs' ? 'slabs' : 'layers'} of ${settings.materialThickness} in stock`,
+    `Finished height: ${result.achievedHeight.toFixed(3)} in, depth off the wall: ${result.achievedDepth.toFixed(3)} in`,
+    `Sheets: ${result.sheets.length} × ${settings.sheetWidth} × ${settings.sheetHeight} in (${result.stockSheets} four-by-eight stock sheets)`,
+    ''
+  ];
+  if (result.buildMode === 'slabs') {
+    notes.push('Slabs stack bottom (1) to top with their flat back edges against a straight board.');
+    for (const r of result.rods) notes.push(`Rod ${r.columnId}: x = ${r.x.toFixed(3)} in in slab coordinates, ${r.offBack.toFixed(3)} in off the back edge, hole Ø ${r.holeDiameter.toFixed(3)} in, runs through slabs ${r.fromLayer + 1} to ${r.toLayer + 1}, cut ${r.length.toFixed(2)} in long.`);
+    if (!result.rods.length) notes.push('No rods fit: glue slabs by eye against the back edge.');
+  } else if (result.buildMode === 'terraced') {
+    notes.push('Layer 1 goes against the wall. Pins are short dowels (two thicknesses long) pressed into the matching holes of neighbouring layers.');
+  } else {
+    notes.push('Stack layers bottom (1) to top on the dowel columns listed in the DOWEL layer.');
+  }
+  notes.push('', 'Warnings at export time:', ...result.warnings.map(w => `- [${w.severity}] ${w.message}`));
+  zip.file(`${safe}_assembly.txt`, notes.join('\n'));
   zip.file(`${safe}_sheet-map.csv`, ['sheet,part,layer,rotation,x,y,nested_in', ...result.sheets.flatMap(sheet => sheet.placements.map(p => {
     const part = parts.find(x => x.id === p.partId)!;
     return [sheet.index + 1, part.label, part.layerIndex + 1, p.rotation, p.x.toFixed(4), p.y.toFixed(4), p.nestedInPartId ?? ''].join(',');

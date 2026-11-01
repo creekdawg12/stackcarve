@@ -1,5 +1,5 @@
 import type { Part2D, Point2, Polyline, StrokeMark } from '../types';
-import { bounds, pointInSolid } from '../geometry/polygon';
+import { bounds, pointInPolygon, pointInSolid } from '../geometry/polygon';
 
 // Compact single-stroke simplex glyphs. Coordinates use a 0..1 cap-height grid.
 const G: Record<string, number[][][]> = {
@@ -59,34 +59,66 @@ function translated(lines: Polyline[], origin: Point2): Polyline[] {
   return lines.map(line => line.map(p => ({ x: p.x + origin.x, y: p.y + origin.y })));
 }
 
-function fits(part: Part2D, lines: Polyline[], dowelClearance: number) {
+function fits(part: Part2D, lines: Polyline[], dowelClearance: number, zones?: Polyline[]) {
   const holes = [...part.structuralHoles, ...part.hollowCuts];
   return lines.every(line => line.every(p => pointInSolid(p, part.outer, holes) &&
+    (!zones || zones.some(z => pointInPolygon(p, z))) &&
     part.dowels.every(d => Math.hypot(p.x - d.x, p.y - d.y) > d.diameter / 2 + dowelClearance)));
 }
 
-export function buildEtch(part: Part2D, text: string, defaultHeight: number, minHeight: number): StrokeMark {
+function glyphLines(text: string, h: number): Polyline[] {
+  const raw = makeText(text, h);
+  const rb = bounds(raw.flat());
+  const arrow: Polyline[] = [
+    [{ x: rb.maxX + h * .35, y: 0 }, { x: rb.maxX + h * .35, y: h * .9 }],
+    [{ x: rb.maxX + h * .35, y: h * .9 }, { x: rb.maxX + h * .18, y: h * .68 }],
+    [{ x: rb.maxX + h * .35, y: h * .9 }, { x: rb.maxX + h * .52, y: h * .68 }]
+  ];
+  return [...raw, ...arrow];
+}
+
+function zoneOrigins(zones: Polyline[], spacing: number): Point2[] {
+  const out: Point2[] = [];
+  for (const zone of zones) {
+    const b = bounds(zone);
+    out.push({ x: (b.minX + b.maxX) / 2, y: (b.minY + b.maxY) / 2 });
+    for (let y = b.minY + spacing / 2; y <= b.maxY; y += spacing) for (let x = b.minX + spacing / 2; x <= b.maxX; x += spacing) {
+      const p = { x, y };
+      if (pointInPolygon(p, zone)) out.push(p);
+    }
+  }
+  return out;
+}
+
+/**
+ * Lay the label down as single-stroke polylines that fit in solid material, clear of dowels.
+ * Preferred zones (regions the next layer hides) are tried first; with requireZone the mark is
+ * omitted rather than placed where it would show on the finished piece.
+ */
+export function buildEtch(part: Part2D, text: string, defaultHeight: number, minHeight: number, options: { zones?: Polyline[]; requireZone?: boolean } = {}): StrokeMark {
   const b = bounds(part.outer);
-  const candidates = [
+  const fallback = [
     { x: b.minX + b.width * .5, y: b.minY + b.height * .5 },
     { x: b.minX + b.width * .3, y: b.minY + b.height * .3 },
     { x: b.minX + b.width * .7, y: b.minY + b.height * .3 },
     { x: b.minX + b.width * .5, y: b.minY + b.height * .72 }
   ];
+  const zones = options.zones?.filter(z => z.length >= 3) ?? [];
   for (let h = defaultHeight; h >= minHeight - 1e-6; h -= 0.05) {
-    const raw = makeText(text, h);
-    const rb = bounds(raw.flat());
-    const arrow: Polyline[] = [
-      [{ x: rb.maxX + h * .35, y: 0 }, { x: rb.maxX + h * .35, y: h * .9 }],
-      [{ x: rb.maxX + h * .35, y: h * .9 }, { x: rb.maxX + h * .18, y: h * .68 }],
-      [{ x: rb.maxX + h * .35, y: h * .9 }, { x: rb.maxX + h * .52, y: h * .68 }]
-    ];
-    const combined = [...raw, ...arrow];
+    const combined = glyphLines(text, h);
     const cb = bounds(combined.flat());
-    for (const c of candidates) {
-      const origin = { x: c.x - (cb.minX + cb.maxX) / 2, y: c.y - (cb.minY + cb.maxY) / 2 };
-      const lines = translated(combined, origin);
-      if (fits(part, lines, 0.08)) return { polylines: lines, text, height: h };
+    const place = (c: Point2) => translated(combined, { x: c.x - (cb.minX + cb.maxX) / 2, y: c.y - (cb.minY + cb.maxY) / 2 });
+    if (zones.length) {
+      for (const c of zoneOrigins(zones, Math.max(h * 0.6, 0.15))) {
+        const lines = place(c);
+        if (fits(part, lines, 0.08, zones)) return { polylines: lines, text, height: h };
+      }
+    }
+    if (!options.requireZone) {
+      for (const c of fallback) {
+        const lines = place(c);
+        if (fits(part, lines, 0.08)) return { polylines: lines, text, height: h };
+      }
     }
   }
   return { polylines: [], text, height: minHeight, omitted: true };
