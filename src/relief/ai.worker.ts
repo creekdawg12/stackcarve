@@ -6,6 +6,7 @@
  * Models download from the Hugging Face Hub on first use and are cached by the browser.
  */
 import type { AiRequest, AiResponse, CutoutSpec } from './ai';
+const PROTOCOL = 3;
 
 type Transformers = typeof import('@huggingface/transformers');
 type Device = 'webgpu' | 'wasm';
@@ -28,7 +29,10 @@ function progressReporter(id: string, label: string) {
   const files = new Map<string, { loaded: number; total: number }>();
   return (p: unknown) => {
     const info = p as { status?: string; file?: string; loaded?: number; total?: number; progress?: number };
-    if (info.status === 'progress' && info.file) {
+    if (info.status === 'initiate' && info.file) post({ id, kind: 'progress', progress: 1, status: `${label}: looking for ${info.file} in the browser cache…` });
+    else if (info.status === 'download' && info.file) post({ id, kind: 'progress', progress: 1, status: `${label}: downloading ${info.file}…` });
+    else if (info.status === 'done' && info.file) post({ id, kind: 'progress', progress: 50, status: `${label}: ${info.file} ready` });
+    else if (info.status === 'progress' && info.file) {
       files.set(info.file, { loaded: info.loaded ?? 0, total: info.total ?? 0 });
       let loaded = 0, total = 0;
       for (const f of files.values()) { loaded += f.loaded; total += f.total; }
@@ -55,12 +59,24 @@ async function getPipeline(task: 'depth-estimation' | 'background-removal', mode
   return pipelines.get(key)!;
 }
 
-async function runDepth(id: string, blob: Blob, model: string) {
+function deviceOrder(preferCpu: boolean): { device: Device; dtype: string }[] {
+  const gpu: { device: Device; dtype: string }[] = hasWebGpu() ? [{ device: 'webgpu', dtype: 'fp16' }, { device: 'webgpu', dtype: 'fp32' }] : [];
+  const cpu: { device: Device; dtype: string }[] = [{ device: 'wasm', dtype: 'q8' }];
+  return preferCpu ? [...cpu, ...gpu] : [...gpu, ...cpu];
+}
+
+async function loadLibrary(id: string) {
+  post({ id, kind: 'progress', progress: 1, status: 'AI worker started; loading the model library…' });
   const tf = await transformers();
+  post({ id, kind: 'progress', progress: 1, status: 'Model library loaded; decoding the photo…' });
+  return tf;
+}
+
+async function runDepth(id: string, blob: Blob, model: string, preferCpu: boolean) {
+  const tf = await loadLibrary(id);
   const image = await tf.RawImage.fromBlob(blob);
-  const attempts: { device: Device; dtype: string }[] = hasWebGpu()
-    ? [{ device: 'webgpu', dtype: 'fp16' }, { device: 'webgpu', dtype: 'fp32' }, { device: 'wasm', dtype: 'q8' }]
-    : [{ device: 'wasm', dtype: 'q8' }];
+  post({ id, kind: 'progress', progress: 1, status: 'Photo decoded; loading the depth model…' });
+  const attempts = deviceOrder(preferCpu);
   let lastError: unknown = null;
   for (const a of attempts) {
     try {
@@ -135,17 +151,16 @@ async function runMattingManual(id: string, image: unknown, device: Device, dtyp
   return matte;
 }
 
-async function runCutout(id: string, blob: Blob, candidates: CutoutSpec[], size: number) {
-  const tf = await transformers();
+async function runCutout(id: string, blob: Blob, candidates: CutoutSpec[], size: number, preferCpu: boolean) {
+  const tf = await loadLibrary(id);
   const image = await tf.RawImage.fromBlob(blob);
-  const devices: { device: Device; dtype: string }[] = hasWebGpu()
-    ? [{ device: 'webgpu', dtype: 'fp16' }, { device: 'webgpu', dtype: 'fp32' }, { device: 'wasm', dtype: 'q8' }]
-    : [{ device: 'wasm', dtype: 'q8' }];
+  post({ id, kind: 'progress', progress: 1, status: `Photo decoded (${(image as { width: number }).width} px wide); loading the cutout model…` });
+  const devices = deviceOrder(preferCpu);
   let lastError: unknown = null;
   for (const cand of candidates) {
     for (const a of devices) {
       try {
-        post({ id, kind: 'progress', progress: 1, status: `Cutout: loading ${cand.label} on ${a.device}…` });
+        post({ id, kind: 'progress', progress: 1, status: `Cutout: loading ${cand.label} on ${a.device === 'wasm' ? 'the CPU (slower, steadier on tablets)' : 'the GPU'}…` });
         let width: number, height: number, channels: number, data: Uint8Array | Uint8ClampedArray;
         if (cand.strategy === 'matting-manual') {
           const matte = await runMattingManual(cand.id, image, a.device, a.dtype, id, `Cutout (${cand.label})`, size);
@@ -180,9 +195,11 @@ async function runCutout(id: string, blob: Blob, candidates: CutoutSpec[], size:
 
 self.onmessage = async (e: MessageEvent<AiRequest>) => {
   const req = e.data;
+  post({ id: req.id, kind: 'hello', protocol: PROTOCOL });
+  if (req.protocol !== PROTOCOL) return;
   try {
-    if (req.kind === 'depth') await runDepth(req.id, req.blob, req.model);
-    else if (req.kind === 'cutout') await runCutout(req.id, req.blob, req.candidates, req.size);
+    if (req.kind === 'depth') await runDepth(req.id, req.blob, req.model, req.preferCpu);
+    else if (req.kind === 'cutout') await runCutout(req.id, req.blob, req.candidates, req.size, req.preferCpu);
   } catch (err) {
     post({ id: req.id, kind: 'error', message: err instanceof Error ? err.message : String(err) });
   }

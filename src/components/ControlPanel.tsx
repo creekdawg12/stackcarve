@@ -132,7 +132,7 @@ export function ControlPanel({ projectName, setProjectName }: { projectName: str
       dispatch({type:'reliefBase',base});
       setRelief({source:'depth'});
       dispatch({type:'busy',label:null,progress:100,status:`Depth estimated on ${out.device}. ${mask?'':'Next: Cut out subject, or paint the mask by hand.'}`});
-    } catch(e) { dispatch({type:'busy',label:null,status:`Depth failed: ${e instanceof Error?e.message:String(e)}. The model downloads from huggingface.co and cdn.jsdelivr.net on first use; check the connection and try again.`}); }
+    } catch(e) { const m=e instanceof Error?e.message:String(e); dispatch({type:'busy',label:null,status:m==='Cancelled'?'Depth cancelled.':`Depth failed: ${m}${/[.!]$/.test(m)?'':'.'}${/Reload|shop PC|out of date/.test(m)?'':' The model downloads from huggingface.co and cdn.jsdelivr.net on first use; check the connection and try again.'}`}); }
   };
 
   const runCutout = async () => {
@@ -147,7 +147,7 @@ export function ControlPanel({ projectName, setProjectName }: { projectName: str
       const floor = reliefBase.source === 'depth' ? suggestFloor(reliefBase, m, settings.relief) : settings.relief.depthFloor;
       if (floor !== settings.relief.depthFloor) setRelief({depthFloor:floor});
       dispatch({type:'busy',label:null,progress:100,status:`Subject cut out with ${out.model} on ${out.device}. Wall plane set to ${floor.toFixed(2)} so the subject uses the full relief depth. Check the edges in the Photo tab and paint over anything it missed.`});
-    } catch(e) { dispatch({type:'busy',label:null,status:`Cutout failed: ${e instanceof Error?e.message:String(e)}. The model downloads from huggingface.co and cdn.jsdelivr.net on first use; check the connection and try again.`}); }
+    } catch(e) { const m=e instanceof Error?e.message:String(e); dispatch({type:'busy',label:null,status:m==='Cancelled'?'Cutout cancelled.':`Cutout failed: ${m}${/[.!]$/.test(m)?'':'.'}${/Reload|shop PC|out of date/.test(m)?'':' The model downloads from huggingface.co and cdn.jsdelivr.net on first use; check the connection and try again.'}`}); }
   };
 
   const loadSample = async () => {

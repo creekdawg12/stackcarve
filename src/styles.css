@@ -80,3 +80,7 @@
 .view-buttons button{min-width:34px;height:34px;border:1px solid #45515a;background:#111c;color:#e1e8ec;border-radius:7px;font-size:15px;cursor:pointer;padding:0 10px}
 .view-buttons button:hover{border-color:var(--amber)}
 .viewport-hint{max-width:min(92%,760px);text-align:center}
+
+.busy-overlay .cancel{margin-top:6px;border:1px solid #4c5962;background:#1b2126;color:#dce4e9;border-radius:6px;padding:7px 16px;cursor:pointer;font-size:12px}
+.busy-overlay .cancel:hover{border-color:var(--amber)}
+.busy-overlay span{max-width:min(80%,640px);text-align:center;line-height:1.5}

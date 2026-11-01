@@ -6,6 +6,7 @@ import { PhotoWorkbench } from './components/PhotoWorkbench';
 import { SlicesViewport } from './components/SlicesViewport';
 import { SheetsView } from './components/SheetsView';
 import { WarningsPanel } from './components/WarningsPanel';
+import { cancelAi } from './relief/ai';
 
 function Workspace() {
   const { tab, dispatch, busy, progress, status, result, selectedLayer, selectedPartId, settings, unsavedAi } = useStore();
@@ -30,7 +31,8 @@ function Workspace() {
         {tab==='model'&&(photoMode?<PhotoWorkbench/>:<ModelViewport/>)}
         {tab==='slices'&&<SlicesViewport/>}
         {tab==='sheets'&&<SheetsView projectName={projectName}/>} 
-        {busy&&<div className="busy-overlay"><div className="spinner"/><b>{busy}</b><span>{status}</span><div className="progress"><i style={{width:`${Math.max(2,progress)}%`}}/></div></div>}
+        {busy&&<div className="busy-overlay"><div className="spinner"/><b>{busy}</b><span>{status}</span><div className="progress"><i style={{width:`${Math.max(2,progress)}%`}}/></div>
+          {/depth|cutting out/i.test(busy)&&<button className="cancel" onClick={()=>{cancelAi();dispatch({type:'busy',label:null,status:'Cancelled.'});}}>Cancel</button>}</div>}
         <div className={/failed|cannot|first\b|too |more than/i.test(status)?'statusbar error':'statusbar'}><span>{status}</span>{selected&&<b>Selected {selected.label} · Layer {selectedLayer+1}</b>}</div>
       </section>
       <WarningsPanel/>
