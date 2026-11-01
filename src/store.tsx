@@ -17,6 +17,8 @@ interface State {
   busy: string | null;
   progress: number;
   status: string;
+  /** True when AI depth or a mask exists that has not been written to a project file yet. */
+  unsavedAi: boolean;
 }
 
 type Action =
@@ -30,7 +32,8 @@ type Action =
   | { type: 'selectLayer'; index: number }
   | { type: 'selectPart'; id: string | null }
   | { type: 'busy'; label: string | null; progress?: number; status?: string }
-  | { type: 'project'; project: StackCarveProject };
+  | { type: 'project'; project: StackCarveProject }
+  | { type: 'saved' };
 
 const initialState: State = {
   tab: 'model',
@@ -44,7 +47,8 @@ const initialState: State = {
   selectedPartId: null,
   busy: null,
   progress: 0,
-  status: 'Load a mesh or photo to begin.'
+  status: 'Load a mesh or photo to begin.',
+  unsavedAi: false
 };
 
 function reducer(state: State, action: Action): State {
@@ -53,13 +57,14 @@ function reducer(state: State, action: Action): State {
     case 'settings': return { ...state, settings: { ...state.settings, ...action.value }, result: null };
     case 'source': return { ...state, sourceAsset: action.asset, mesh: action.mesh ?? state.mesh, result: null };
     case 'mesh': return { ...state, mesh: action.mesh, result: null };
-    case 'reliefBase': return { ...state, reliefBase: action.base, mask: action.mask === undefined ? state.mask : action.mask, result: null };
-    case 'mask': return { ...state, mask: action.mask, result: null };
+    case 'reliefBase': return { ...state, reliefBase: action.base, mask: action.mask === undefined ? state.mask : action.mask, result: null, unsavedAi: state.unsavedAi || action.base?.source === 'depth' };
+    case 'mask': return { ...state, mask: action.mask, result: null, unsavedAi: state.unsavedAi || !!action.mask };
     case 'result': return { ...state, result: action.result, selectedLayer: 0, selectedPartId: null };
     case 'selectLayer': return { ...state, selectedLayer: action.index };
     case 'selectPart': return { ...state, selectedPartId: action.id };
     case 'busy': return { ...state, busy: action.label, progress: action.progress ?? state.progress, status: action.status ?? state.status };
-    case 'project': return { ...state, settings: action.project.settings, sourceAsset: action.project.sourceAsset, result: null, status: 'Project settings loaded.' };
+    case 'project': return { ...state, settings: action.project.settings, sourceAsset: action.project.sourceAsset, result: null, status: 'Project settings loaded.', unsavedAi: false };
+    case 'saved': return { ...state, unsavedAi: false };
     default: return state;
   }
 }

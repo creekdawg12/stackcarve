@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { StoreProvider, useStore } from './store';
 import { ControlPanel } from './components/ControlPanel';
 import { ModelViewport } from './components/ModelViewport';
@@ -8,8 +8,14 @@ import { SheetsView } from './components/SheetsView';
 import { WarningsPanel } from './components/WarningsPanel';
 
 function Workspace() {
-  const { tab, dispatch, busy, progress, status, result, selectedLayer, selectedPartId, settings } = useStore();
+  const { tab, dispatch, busy, progress, status, result, selectedLayer, selectedPartId, settings, unsavedAi } = useStore();
   const photoMode = settings.inputMode === 'relief';
+  useEffect(() => {
+    if (!unsavedAi) return;
+    const guard = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', guard);
+    return () => window.removeEventListener('beforeunload', guard);
+  }, [unsavedAi]);
   const [projectName, setProjectName] = useState('stackcarve-project');
   const selected = result?.layers.flatMap(l => l.parts).find(p => p.id === selectedPartId);
   return <div className="app-shell">

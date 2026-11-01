@@ -26,18 +26,24 @@ Wall art needs the model oriented face toward you with the top up. The Model tab
 - **Rod hole diameter** (slabs) is what gets routed; 13/32 in suits 3/8 in rod.
 - **Backer plate** (slabs) adds a silhouette plate for hanging hardware; the slabs' flat backs glue to it.
 
+### Getting started
+
+The panel opens with four presets: **Face plaque** (terraced, 1/4 in, 2.5 in deep), **Line-art slabs** (vertical slabs, 1/4 in gap, hollowing off), **Solid slabs** (horizontal, touching, rods) and **Statue** (needs a mesh). Pick one, load a photo or model, press Generate. The bar above the Generate button always shows the piece count, finished size and stock, and turns amber when the count gets large. Sections you rarely touch (hollowing, rods, sheets) are collapsed with a one-line summary; tap the heading to open them.
+
+The Sheets tab ends with a **Before you cut** checklist: stock, CAM layer meanings, rods and spacers, assembly order, label notes. Tick it off there, copy it, or find it in `assembly.txt` inside the ZIP.
+
 ### From a photo
 
 Wall art only shows the front surface, so a depth map of the photo is all the 3D the slicer needs. The **Photo** input offers two depth sources and a cutout mask, all computed in the browser:
 
 1. **Estimate depth (AI)** runs Depth Anything V2 Small (Apache-2.0) through Transformers.js, on the GPU via WebGPU when the browser has it, otherwise on the CPU. It predicts relative depth from a single photo: the nose comes forward, the ears fall back toward the wall.
 2. **Cut out subject (AI)** runs RMBG-1.4 to separate the subject from the background. The resulting mask is the silhouette of the piece. RMBG-1.4 is licensed for non-commercial use; swap the model id in `src/defaults.ts` if that matters to you.
-3. The **Photo tab** shows the photo with the mask painted over it and the depth that will be cut. Paint with the Remove or Keep brush to fix edges or drop the body below a face.
+3. The **Photo tab** shows the photo with the mask painted over it and the depth that will be cut. Paint with the Remove or Keep brush to fix edges or drop the body below a face. **Keep largest** drops specks, **Fill holes** closes eyes and gaps, **Undo** steps back through strokes and cleanups. After the cutout the wall plane is fitted to the back of the subject automatically.
 4. **Depth curve** controls: wall plane (depth floor), black and white points, gamma (below 1 pushes the nose out), blur, and the brightness fallback that needs no download.
 
 Models download from the Hugging Face Hub once (roughly 50 to 150 MB in total) and are cached by the browser; the ONNX runtime comes from jsDelivr. Nothing is uploaded anywhere. Shoot the subject head-on, filling the frame, against a plain background.
 
-Photo depth is relative, so **Relief depth** sets how far the closest point stands off the wall and **Base depth** sets the minimum depth inside the silhouette, which gives every slab a flat back to glue and drill. Saved projects embed the depth and mask so reopening one does not rerun the models.
+Depth and mask exist only in the open tab until you save the project; a banner reminds you and the browser asks before closing. Photo depth is relative, so **Relief depth** sets how far the closest point stands off the wall and **Base depth** sets the minimum depth inside the silhouette, which gives every slab a flat back to glue and drill. Saved projects embed the depth and mask so reopening one does not rerun the models.
 
 ### Slab direction and spacing
 

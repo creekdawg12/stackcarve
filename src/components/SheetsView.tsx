@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { buildChecklist, checklistText } from '../export/checklist';
 import { useStore } from '../store';
 import { centroid, circlePolyline, transformPolyline } from '../geometry/polygon';
 import { sheetToDxf } from '../export/dxf';
@@ -45,10 +46,35 @@ export function SheetsView({ projectName }: { projectName: string }) {
       </svg>
     </div>
     <div className="sheet-stats"><span>{sheet.placements.length} parts</span><span>{(sheet.utilization*100).toFixed(1)}% material utilization</span><span>{settings.sheetWidth} × {settings.sheetHeight} in</span><span>{result.sheets.length} sheets = {result.stockSheets} × 4×8 stock</span></div>
-    {(result.rods.length>0||result.buildMode!=='statue')&&<div className="assembly">
-      {result.rods.map(r=><span key={r.columnId}><b>{r.columnId}</b> x = {r.x.toFixed(2)} in, {r.offBack.toFixed(2)} in off the back, through slabs {r.fromLayer+1} to {r.toLayer+1}, cut {r.length.toFixed(2)} in long, hole Ø{r.holeDiameter.toFixed(3)} in{r.spacerCount>0?`, ${r.spacerCount} spacers × ${r.spacerLength.toFixed(3)} in`:''}</span>)}
-      {result.buildMode==='terraced'&&<span>Layer 1 goes against the wall. Pins are short dowels (2 × thickness) pressed into matching holes; every hole is covered by the layer two steps up.</span>}
-      {result.buildMode==='slabs'&&<span>{result.slabDirection==='vertical'?`Stack slabs 1 (viewer's left) to ${result.layers.filter(l=>l.parts.some(p=>p.role!=='backer')).length} (right) on the rods, lying face down with the flat back edges against a straight board, then glue.`:`Stack slabs 1 (bottom) to ${result.layers.filter(l=>l.parts.some(p=>p.role!=='backer')).length} (top) on the rods with the flat back edges against a straight board, then glue.`}{result.pitch>result.layers[0]?.thickness+1e-9?` Slabs are gapped ${(result.pitch-result.layers[0].thickness).toFixed(3)} in; slide a spacer sleeve onto each rod between slabs.`:''}</span>}
-    </div>}
+    <Checklist/>
+  </div>;
+}
+
+function Checklist() {
+  const { result, settings } = useStore();
+  const [open, setOpen] = useState(true);
+  const [done, setDone] = useState<Record<number, boolean>>({});
+  const [copied, setCopied] = useState(false);
+  const items = useMemo(() => result ? buildChecklist(result, settings) : [], [result, settings]);
+  if (!result || !items.length) return null;
+  const checked = Object.values(done).filter(Boolean).length;
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(checklistText(items)); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { /* clipboard blocked */ }
+  };
+  let lastGroup = '';
+  return <div className={open ? 'checklist' : 'checklist collapsed'}>
+    <div className="checklist-head">
+      <button className="link-btn" onClick={() => setOpen(o => !o)}>{open ? '▾' : '▸'} Before you cut · {checked}/{items.length}</button>
+      <button onClick={copy}>{copied ? 'Copied' : 'Copy checklist'}</button>
+    </div>
+    {open && <ol>
+      {items.map((it, i) => {
+        const head = it.group !== lastGroup ? it.group : null; lastGroup = it.group;
+        return <li key={i} className={it.group === 'Fix first' ? 'fix' : ''}>
+          {head && <span className="group">{head}</span>}
+          <label><input type="checkbox" checked={!!done[i]} onChange={e => setDone(d => ({ ...d, [i]: e.target.checked }))}/><span>{it.text}</span></label>
+        </li>;
+      })}
+    </ol>}
   </div>;
 }

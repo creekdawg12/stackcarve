@@ -255,3 +255,60 @@ export function marchingSquares(
     .filter(p => p.length >= 3 && area(p) >= minArea)
     .sort((a, b) => area(b) - area(a));
 }
+
+/** Label 4-connected regions of a 0/255 mask. Returns labels (0 = background) and the pixel count per label. */
+function labelRegions(mask: Uint8Array, width: number, height: number) {
+  const labels = new Int32Array(mask.length);
+  const sizes: number[] = [0];
+  const stack: number[] = [];
+  let next = 1;
+  for (let start = 0; start < mask.length; start++) {
+    if (!mask[start] || labels[start]) continue;
+    const id = next++;
+    let size = 0;
+    stack.push(start);
+    labels[start] = id;
+    while (stack.length) {
+      const i = stack.pop()!;
+      size++;
+      const x = i % width, y = (i - x) / width;
+      if (x > 0 && mask[i - 1] && !labels[i - 1]) { labels[i - 1] = id; stack.push(i - 1); }
+      if (x < width - 1 && mask[i + 1] && !labels[i + 1]) { labels[i + 1] = id; stack.push(i + 1); }
+      if (y > 0 && mask[i - width] && !labels[i - width]) { labels[i - width] = id; stack.push(i - width); }
+      if (y < height - 1 && mask[i + width] && !labels[i + width]) { labels[i + width] = id; stack.push(i + width); }
+    }
+    sizes.push(size);
+  }
+  return { labels, sizes };
+}
+
+/** Keep only the largest connected region of the mask; specks and stray background pieces go. */
+export function keepLargestRegion(mask: Uint8Array, width: number, height: number): Uint8Array {
+  const { labels, sizes } = labelRegions(mask, width, height);
+  let best = 0;
+  for (let i = 1; i < sizes.length; i++) if (sizes[i] > sizes[best]) best = i;
+  const out = new Uint8Array(mask.length);
+  if (best === 0) return out;
+  for (let i = 0; i < mask.length; i++) out[i] = labels[i] === best ? 255 : 0;
+  return out;
+}
+
+/** Fill background pockets that are completely enclosed by the mask (eyes, gaps between wrinkles). */
+export function fillHoles(mask: Uint8Array, width: number, height: number): Uint8Array {
+  const reach = new Uint8Array(mask.length);
+  const stack: number[] = [];
+  const seed = (i: number) => { if (!mask[i] && !reach[i]) { reach[i] = 1; stack.push(i); } };
+  for (let x = 0; x < width; x++) { seed(x); seed((height - 1) * width + x); }
+  for (let y = 0; y < height; y++) { seed(y * width); seed(y * width + width - 1); }
+  while (stack.length) {
+    const i = stack.pop()!;
+    const x = i % width, y = (i - x) / width;
+    if (x > 0) seed(i - 1);
+    if (x < width - 1) seed(i + 1);
+    if (y > 0) seed(i - width);
+    if (y < height - 1) seed(i + width);
+  }
+  const out = new Uint8Array(mask.length);
+  for (let i = 0; i < mask.length; i++) out[i] = mask[i] || !reach[i] ? 255 : 0;
+  return out;
+}

@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_SETTINGS } from '../defaults';
 import { runPipeline } from '../engine/pipeline';
-import { composeHeightmap, maskFromThreshold, normalizeDepth, resampleGrid, suggestFloor } from '../relief/heightmap';
+import { composeHeightmap, fillHoles, keepLargestRegion, maskFromThreshold, normalizeDepth, resampleGrid, suggestFloor } from '../relief/heightmap';
+import { buildChecklist, checklistText } from '../export/checklist';
 import { slabsFromHeightmap } from '../relief/slabs';
 import { area, bounds } from '../geometry/polygon';
 import type { ProjectSettings, ReliefBase } from '../types';
@@ -166,5 +167,53 @@ describe('slabs from a heightmap', () => {
       expect(result.warnings.some(w => w.id === 'gap-hollow')).toBe(true);
       expect(result.sheets.length).toBeGreaterThanOrEqual(1);
     }
+  });
+});
+
+
+describe('mask cleanup', () => {
+  const w = 12, h = 10;
+  const m = new Uint8Array(w * h);
+  const set = (x: number, y: number) => { m[y * w + x] = 255; };
+  // big blob with a 1-pixel hole, plus a 2-pixel speck in the corner
+  for (let y = 2; y < 8; y++) for (let x = 2; x < 9; x++) set(x, y);
+  m[5 * w + 5] = 0;
+  set(10, 0); set(11, 0);
+
+  it('keeps only the largest connected region', () => {
+    const out = keepLargestRegion(m, w, h);
+    expect(out[0 * w + 10]).toBe(0);
+    expect(out[0 * w + 11]).toBe(0);
+    expect(out[3 * w + 3]).toBe(255);
+    expect(out[5 * w + 5]).toBe(0); // hole untouched
+    let count = 0; for (const v of out) if (v) count++;
+    expect(count).toBe(6 * 7 - 1);
+  });
+
+  it('fills enclosed holes but not the open background', () => {
+    const out = fillHoles(m, w, h);
+    expect(out[5 * w + 5]).toBe(255);
+    expect(out[0]).toBe(0);
+    expect(out[9 * w + 0]).toBe(0);
+    expect(out[0 * w + 10]).toBe(255); // speck kept as is
+  });
+});
+
+describe('checklist', () => {
+  it('lists stock, CAM, rods, spacers and assembly steps for gapped slabs', async () => {
+    const base = domeBase();
+    const mask = maskFromThreshold(base, 0.1);
+    const map = composeHeightmap(base, { settings: relief, mask, preview: false });
+    const settings: ProjectSettings = { ...DEFAULT_SETTINGS, inputMode: 'relief', buildMode: 'slabs', materialThickness: 0.25, minFeature: 0.2, wallThickness: 0.5, overlapMargin: 0.2, dowelEdgeClearance: 0.12, textHeight: 0.3, minTextHeight: 0.15, relief: { ...relief, baseDepth: 0.75, depth: 3 }, wallArt: { ...DEFAULT_SETTINGS.wallArt, slabDirection: 'vertical', slabGap: 0.25, backZoneDepth: 0.6, rodHoleDiameter: 0.2, backerPlate: true } };
+    const result = await runPipeline({ settings, heightmap: map });
+    const items = buildChecklist(result, settings);
+    const groups = new Set(items.map(i => i.group));
+    for (const g of ['Stock', 'CAM', 'Rods', 'Assembly', 'Labels']) expect(groups.has(g)).toBe(true);
+    expect(items.some(i => /spacers/.test(i.text))).toBe(true);
+    expect(items.some(i => /viewer's left/.test(i.text))).toBe(true);
+    expect(items.some(i => /Thin stock/.test(i.text))).toBe(true);
+    const text = checklistText(items);
+    expect(text).toMatch(/^STOCK/);
+    expect(text.split('[ ]').length - 1).toBe(items.length);
   });
 });

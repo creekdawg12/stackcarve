@@ -10,7 +10,7 @@ import { MeshyProvider } from '../providers/meshy';
 import { decodeRelief, makeProject, parseProject } from '../export/project';
 import { INPUT_PRESETS, LAYER_SOFT_LIMIT, MODE_PRESETS, SHEET_PRESETS, THICKNESS_PRESETS } from '../defaults';
 import { measureOriented } from '../mesh/measure';
-import type { BuildMode, ReliefBase } from '../types';
+import type { BuildMode, ProjectSettings, ReliefBase } from '../types';
 
 const MODE_LABEL: Record<BuildMode, string> = { statue: 'Statue', terraced: 'Wall art: terraced', slabs: 'Wall art: slabs' };
 const MODE_NOTE: Record<BuildMode, string> = {
@@ -19,9 +19,48 @@ const MODE_NOTE: Record<BuildMode, string> = {
   slabs: 'Horizontal slabs stacked bottom to top with a flat back. Two rods run through a hidden strip along the back edge.'
 };
 
+type SectionId = 'input' | 'build' | 'scale' | 'depth' | 'hollow' | 'pins' | 'sheets' | 'ai';
+const DEFAULT_OPEN: Record<SectionId, boolean> = { input: true, build: true, scale: true, depth: true, hollow: false, pins: false, sheets: false, ai: true };
+
+function Section({ id, title, summary, open, toggle, children }: { id: SectionId; title: string; summary?: string; open: boolean; toggle: (id: SectionId) => void; children: React.ReactNode }) {
+  return <section className={open ? 'open' : 'closed'}>
+    <button type="button" className="section-head" onClick={() => toggle(id)} aria-expanded={open}>
+      <h3>{title}</h3>
+      {!open && summary && <small>{summary}</small>}
+      <i>{open ? '▾' : '▸'}</i>
+    </button>
+    {open && children}
+  </section>;
+}
+
+export const PRESETS: { id: string; label: string; hint: string; apply: (s: ProjectSettings) => Partial<ProjectSettings> }[] = [
+  {
+    id: 'plaque', label: 'Face plaque', hint: 'Terraced, 1/4 in, 2.5 in deep',
+    apply: s => ({ buildMode: 'terraced', materialThickness: 0.25, hollowEnabled: true, wallThickness: 0.75, overlapMargin: 0.375, minFeature: 0.25, partGap: 0.3,
+      relief: { ...s.relief, depth: 2.5, baseDepth: 1 }, wallArt: { ...s.wallArt, slabGap: 0, basePlate: true, reliefDepth: s.inputMode === 'relief' ? s.wallArt.reliefDepth : 6 } })
+  },
+  {
+    id: 'lineart', label: 'Line-art slabs', hint: 'Vertical slabs, 1/4 in gap, hollowing off',
+    apply: s => ({ buildMode: 'slabs', materialThickness: 0.25, hollowEnabled: false, minFeature: 0.25, partGap: 0.3,
+      relief: { ...s.relief, depth: 3, baseDepth: 1 }, wallArt: { ...s.wallArt, slabDirection: 'vertical', slabGap: 0.25, backerPlate: true, backZoneDepth: 1 } })
+  },
+  {
+    id: 'stack', label: 'Solid slabs', hint: 'Horizontal slabs, touching, rods',
+    apply: s => ({ buildMode: 'slabs', materialThickness: 0.25, hollowEnabled: true, wallThickness: 0.75, overlapMargin: 0.375, minFeature: 0.25, partGap: 0.3,
+      relief: { ...s.relief, depth: 3, baseDepth: 1 }, wallArt: { ...s.wallArt, slabDirection: 'horizontal', slabGap: 0, backerPlate: false } })
+  },
+  {
+    id: 'statue', label: 'Statue', hint: 'Needs a 3D model; 3/4 in, hollow',
+    apply: () => ({ inputMode: 'mesh', buildMode: 'statue', materialThickness: 0.75, hollowEnabled: true, wallThickness: 0.75, overlapMargin: 0.5, minFeature: 0.125, partGap: 0.5, targetHeight: 12 })
+  }
+];
+
 export function ControlPanel({ projectName, setProjectName }: { projectName: string; setProjectName: (s:string)=>void }) {
   const store = useStore();
-  const { settings, patchSettings, sourceAsset, mesh, reliefBase, mask, result, dispatch } = store;
+  const [openSections, setOpenSections] = useState<Record<SectionId, boolean>>(DEFAULT_OPEN);
+  const toggle = (id: SectionId) => setOpenSections(o => ({ ...o, [id]: !o[id] }));
+  const isOpen = (id: SectionId) => openSections[id];
+  const { settings, patchSettings, sourceAsset, mesh, reliefBase, mask, result, dispatch, unsavedAi } = store;
   const [apiKey, setApiKey] = useState(() => localStorage.getItem('stackcarve.meshy.apiKey') ?? '');
   const [aiImage, setAiImage] = useState<File | null>(null);
   const projectInput = useRef<HTMLInputElement>(null);
@@ -163,7 +202,14 @@ export function ControlPanel({ projectName, setProjectName }: { projectName: str
     } catch(e) { dispatch({type:'busy',label:null,status:e instanceof Error?e.message:String(e)}); }
   };
 
-  const saveProject = () => downloadBlob(new Blob([JSON.stringify(makeProject(projectName,settings,sourceAsset,result,{base:reliefBase,mask}),null,2)],{type:'application/json'}),`${projectName||'stackcarve'}.stackcarve.json`);
+  const saveProject = () => { downloadBlob(new Blob([JSON.stringify(makeProject(projectName,settings,sourceAsset,result,{base:reliefBase,mask}),null,2)],{type:'application/json'}),`${projectName||'stackcarve'}.stackcarve.json`); dispatch({type:'saved'}); };
+  const applyPreset = (id: string) => {
+    const preset = PRESETS.find(p => p.id === id);
+    if (!preset) return;
+    const patch = preset.apply(settings);
+    patchSettings(patch);
+    dispatch({type:'busy',label:null,status:`${preset.label} preset applied (${preset.hint}).${patch.inputMode==='mesh'&&settings.inputMode!=='mesh'?' Switched to Mesh input: a statue needs a 3D model.':''}`});
+  };
   const loadProject = async (file: File) => {
     try {
       const project=parseProject(await file.text()); setProjectName(project.name); dispatch({type:'project',project});
@@ -175,8 +221,10 @@ export function ControlPanel({ projectName, setProjectName }: { projectName: str
 
   return <aside className="controls">
     <div className="project-row"><input className="project-name" value={projectName} onChange={e=>setProjectName(e.target.value)} aria-label="Project name"/><button onClick={saveProject}>Save</button><button onClick={()=>projectInput.current?.click()}>Load</button><input ref={projectInput} hidden type="file" accept=".json" onChange={e=>e.target.files?.[0]&&loadProject(e.target.files[0])}/></div>
+    {unsavedAi&&<div className="banner"><span>Depth and mask live only in this tab until you save the project.</span><button onClick={saveProject}>Save now</button></div>}
+    <div className="presets"><span>Start from</span>{PRESETS.map(p=><button key={p.id} className="chip" title={p.hint} onClick={()=>applyPreset(p.id)}>{p.label}</button>)}</div>
 
-    <section><h3>Input</h3><div className="segmented">{(['mesh','relief','ai'] as const).map(m=><button className={settings.inputMode===m?'active':''} key={m} onClick={()=>patchSettings({inputMode:m,...(m==='relief'&&settings.inputMode!=='relief'?INPUT_PRESETS.relief:{})})}>{m==='mesh'?'Mesh':m==='relief'?'Photo':'AI statue'}</button>)}</div>
+    <Section id="input" title="Input" summary={settings.inputMode==='mesh'?(mesh?.sourceName??'no mesh'):settings.inputMode==='relief'?(sourceAsset?.name??'no photo'):'AI statue'} open={isOpen('input')} toggle={toggle}><div className="segmented">{(['mesh','relief','ai'] as const).map(m=><button className={settings.inputMode===m?'active':''} key={m} onClick={()=>patchSettings({inputMode:m,...(m==='relief'&&settings.inputMode!=='relief'?{...INPUT_PRESETS.relief,buildMode:settings.buildMode==='statue'?'terraced':settings.buildMode}:{})})}>{m==='mesh'?'Mesh':m==='relief'?'Photo':'AI statue'}</button>)}</div>
       {settings.inputMode==='mesh'&&<><label className="drop"><input type="file" accept=".stl,.obj,.glb" onChange={e=>e.target.files?.[0]&&loadMesh(e.target.files[0])}/><b>Load STL, OBJ, or GLB</b><span>{mesh?.sourceName??'No mesh loaded'}</span></label>
         {!mesh&&<button className="link-btn" onClick={loadSample}>No model handy? Try the sample head</button>}</>}
       {relief&&<><div className="steps">{photoSteps.map((st,i)=><span key={st.label} className={st.done?'done':i===nextStep?'next':''}>{st.done?'✓ ':`${i+1}. `}{st.label}</span>)}</div>
@@ -185,9 +233,9 @@ export function ControlPanel({ projectName, setProjectName }: { projectName: str
         <div className="btn-row"><button disabled={!reliefBase} onClick={thresholdMask}>Mask from threshold</button><button disabled={!mask} onClick={clearMask}>Clear mask</button></div>
         <p className="note">Models download once (roughly 50 to 150 MB total) and run on this computer. Paint the mask in the Photo tab. The cutout model (RMBG-1.4) is licensed for non-commercial use.</p></>}
       {settings.inputMode==='ai'&&<><label className="drop"><input type="file" accept="image/png,image/jpeg" onChange={e=>{const f=e.target.files?.[0];if(f){setAiImage(f);loadPhoto(f)}}}/><b>Load statue photo</b><span>{aiImage?.name??(sourceAsset?.kind==='image'?sourceAsset.name:'No image loaded')}</span></label><button className="primary full" onClick={generateAi}>Generate GLB with Meshy</button></>}
-    </section>
+    </Section>
 
-    <section><h3>Build</h3>
+    <Section id="build" title="Build" summary={MODE_LABEL[mode]} open={isOpen('build')} toggle={toggle}>
       {relief
         ? <>
           <div className="segmented vertical">{(['terraced','slabs'] as const).map(m=><button className={mode===m?'active':''} key={m} onClick={()=>setMode(m)}>{MODE_LABEL[m]}</button>)}</div>
@@ -197,9 +245,9 @@ export function ControlPanel({ projectName, setProjectName }: { projectName: str
           <div className="segmented vertical">{(['statue','terraced','slabs'] as const).map(m=><button className={settings.buildMode===m?'active':''} key={m} onClick={()=>setMode(m)}>{MODE_LABEL[m]}</button>)}</div>
           <p className="note">{MODE_NOTE[settings.buildMode]}</p>
         </>}
-    </section>
+    </Section>
 
-    <section><h3>Scale & layers</h3>
+    <Section id="scale" title="Scale & layers" summary={`${count} ${mode==='slabs'?'slabs':'layers'} · ${t} in stock`} open={isOpen('scale')} toggle={toggle}>
       {relief&&<NumberField label="Finished width on wall" value={settings.relief.finishedWidth} min={1} onChange={n=>setRelief({finishedWidth:n})}/>}
       {relief&&reliefBase&&<div className="computed"><span>Finished height</span><b>{(settings.relief.finishedWidth*(reliefBase.height-1)/Math.max(1,reliefBase.width-1)).toFixed(1)} in</b></div>}
       {relief
@@ -233,9 +281,9 @@ export function ControlPanel({ projectName, setProjectName }: { projectName: str
         <div className="rotation-grid">{(['x','y','z'] as const).map(a=><NumberField key={a} label={`${a.toUpperCase()} rotation`} value={settings.rotationDeg[a]} step={1} suffix="°" onChange={n=>rotate({[a]:n})}/>)}</div>
         {wallArt&&<div className="chips"><button className="chip" onClick={()=>rotate({x:settings.rotationDeg.x-90})}>Z-up → Y-up</button><button className="chip" onClick={()=>rotate({y:(settings.rotationDeg.y+180)%360})}>Turn 180°</button><button className="chip" onClick={()=>rotate({x:0,y:0,z:0})}>Reset</button></div>}
       </>}
-    </section>
+    </Section>
 
-    {relief&&<section><h3>Depth curve</h3>
+    {relief&&<Section id="depth" title="Depth curve" summary={`${settings.relief.source==='depth'?'AI depth':'brightness'} · wall plane ${settings.relief.depthFloor.toFixed(2)} · gamma ${settings.relief.gamma}`} open={isOpen('depth')} toggle={toggle}>
       <div className="segmented"><button className={settings.relief.source==='luminance'?'active':''} onClick={()=>setRelief({source:'luminance'})}>Brightness</button><button className={settings.relief.source==='depth'?'active':''} disabled={reliefBase?.source!=='depth'} onClick={()=>setRelief({source:'depth'})}>AI depth</button></div>
       {reliefBase&&reliefBase.source!==settings.relief.source&&<p className="note">{reliefBase.source==='depth'?'Showing AI depth.':'Brightness is loaded; press Estimate depth to switch to AI depth.'}</p>}
       <label className="toggle"><input type="checkbox" checked={settings.relief.invert} onChange={e=>setRelief({invert:e.target.checked})}/><span>Invert (far becomes near)</span></label>
@@ -248,23 +296,30 @@ export function ControlPanel({ projectName, setProjectName }: { projectName: str
       <NumberField label="Blur" value={settings.relief.blurPx} min={0} max={20} step={.1} suffix="px" onChange={n=>setRelief({blurPx:n})}/>
       {!mask&&<NumberField label="Background threshold (no mask)" value={settings.relief.backgroundThreshold} min={0} max={1} step={.01} suffix="" onChange={n=>setRelief({backgroundThreshold:n})}/>}
       <NumberField label="Minimum island area" value={settings.relief.minIslandArea} min={0} step={.01} suffix="in²" onChange={n=>setRelief({minIslandArea:n})}/>
-    </section>}
+    </Section>}
 
-    <section><h3>Hollowing</h3><label className="toggle"><input type="checkbox" checked={settings.hollowEnabled} onChange={e=>patchSettings({hollowEnabled:e.target.checked})}/><span>Hollow layers (keep only what shows)</span></label><NumberField label="Wall thickness" value={settings.wallThickness} min={.05} onChange={n=>patchSettings({wallThickness:n})}/><NumberField label="Overlap margin" value={settings.overlapMargin} min={0} onChange={n=>patchSettings({overlapMargin:n})}/><NumberField label={mode==='terraced'?'Back solid caps (wall side)':'Bottom solid caps'} value={settings.bottomSolidCaps} min={0} step={1} suffix="" onChange={n=>patchSettings({bottomSolidCaps:Math.round(n)})}/><NumberField label={mode==='terraced'?'Front solid caps':'Top solid caps'} value={settings.topSolidCaps} min={0} step={1} suffix="" onChange={n=>patchSettings({topSolidCaps:Math.round(n)})}/></section>
+    <Section id="hollow" title="Hollowing" summary={settings.hollowEnabled?`on · wall ${settings.wallThickness} in`:'off'} open={isOpen('hollow')} toggle={toggle}><label className="toggle"><input type="checkbox" checked={settings.hollowEnabled} onChange={e=>patchSettings({hollowEnabled:e.target.checked})}/><span>Hollow layers (keep only what shows)</span></label><NumberField label="Wall thickness" value={settings.wallThickness} min={.05} onChange={n=>patchSettings({wallThickness:n})}/><NumberField label="Overlap margin" value={settings.overlapMargin} min={0} onChange={n=>patchSettings({overlapMargin:n})}/><NumberField label={mode==='terraced'?'Back solid caps (wall side)':'Bottom solid caps'} value={settings.bottomSolidCaps} min={0} step={1} suffix="" onChange={n=>patchSettings({bottomSolidCaps:Math.round(n)})}/><NumberField label={mode==='terraced'?'Front solid caps':'Top solid caps'} value={settings.topSolidCaps} min={0} step={1} suffix="" onChange={n=>patchSettings({topSolidCaps:Math.round(n)})}/></Section>
 
-    <section><h3>{mode==='slabs'?'Rods & marks':'Registration & marks'}</h3>
+    <Section id="pins" title={mode==='slabs'?'Rods & marks':'Registration & marks'} summary={mode==='slabs'?`rod hole ${settings.wallArt.rodHoleDiameter} in · text ${settings.textHeight} in`:`dowel ${settings.dowelDiameter} in · text ${settings.textHeight} in`} open={isOpen('pins')} toggle={toggle}>
       {mode!=='slabs'&&<><NumberField label={wallArt?'Pin diameter':'Dowel diameter'} value={settings.dowelDiameter} min={.05} onChange={n=>patchSettings({dowelDiameter:n})}/><NumberField label="Boss diameter" value={settings.dowelBossDiameter} min={settings.dowelDiameter} onChange={n=>patchSettings({dowelBossDiameter:n})}/></>}
       <NumberField label="Edge clearance" value={settings.dowelEdgeClearance} min={0} onChange={n=>patchSettings({dowelEdgeClearance:n})}/>
       <NumberField label="Text height" value={settings.textHeight} min={.1} onChange={n=>patchSettings({textHeight:n})}/>
       {wallArt&&<p className="note">Numbers only go where the next piece covers them. A piece with no hidden spot is left blank and listed in warnings.</p>}
-    </section>
+    </Section>
 
-    <section><h3>Sheets</h3>
+    <Section id="sheets" title="Sheets" summary={`${settings.sheetWidth} × ${settings.sheetHeight} in · gap ${settings.partGap} in`} open={isOpen('sheets')} toggle={toggle}>
       <div className="chips">{SHEET_PRESETS.map(p=><button key={p.label} className={near(settings.sheetWidth,p.width)&&near(settings.sheetHeight,p.height)?'chip active':'chip'} onClick={()=>patchSettings({sheetWidth:p.width,sheetHeight:p.height})}>{p.label}</button>)}</div>
-      <NumberField label="Sheet width" value={settings.sheetWidth} min={1} onChange={n=>patchSettings({sheetWidth:n})}/><NumberField label="Sheet height" value={settings.sheetHeight} min={1} onChange={n=>patchSettings({sheetHeight:n})}/><NumberField label="Edge margin" value={settings.sheetEdgeMargin} min={0} onChange={n=>patchSettings({sheetEdgeMargin:n})}/><NumberField label="Part gap" value={settings.partGap} min={0} onChange={n=>patchSettings({partGap:n})}/><label className="toggle"><input type="checkbox" checked={settings.nestInCutouts} onChange={e=>patchSettings({nestInCutouts:e.target.checked})}/><span>Nest inside ring cutouts</span></label></section>
+      <NumberField label="Sheet width" value={settings.sheetWidth} min={1} onChange={n=>patchSettings({sheetWidth:n})}/><NumberField label="Sheet height" value={settings.sheetHeight} min={1} onChange={n=>patchSettings({sheetHeight:n})}/><NumberField label="Edge margin" value={settings.sheetEdgeMargin} min={0} onChange={n=>patchSettings({sheetEdgeMargin:n})}/><NumberField label="Part gap" value={settings.partGap} min={0} onChange={n=>patchSettings({partGap:n})}/><label className="toggle"><input type="checkbox" checked={settings.nestInCutouts} onChange={e=>patchSettings({nestInCutouts:e.target.checked})}/><span>Nest inside ring cutouts</span></label></Section>
 
-    {settings.inputMode==='ai'&&<section><h3>AI settings</h3><label className="field"><span>Meshy API key</span><input type="password" value={apiKey} placeholder="Stored only in this browser" onChange={e=>setApiKey(e.target.value)}/></label><label className="field"><span>Proxy URL (optional)</span><input value={settings.ai.proxyUrl} placeholder="https://worker.example.workers.dev" onChange={e=>setAi({proxyUrl:e.target.value})}/></label><label className="field"><span>Mesh type</span><select value={settings.ai.modelType} onChange={e=>setAi({modelType:e.target.value as 'standard'|'lowpoly'})}><option value="standard">Standard</option><option value="lowpoly">Low poly</option></select></label><NumberField label="Target polygons" value={settings.ai.targetPolycount} min={1000} step={1000} suffix="" onChange={n=>setAi({targetPolycount:Math.round(n)})}/></section>}
+    {settings.inputMode==='ai'&&<Section id="ai" title="AI settings" summary={settings.ai.apiKeyPresent?'key saved':'no key'} open={isOpen('ai')} toggle={toggle}><label className="field"><span>Meshy API key</span><input type="password" value={apiKey} placeholder="Stored only in this browser" onChange={e=>setApiKey(e.target.value)}/></label><label className="field"><span>Proxy URL (optional)</span><input value={settings.ai.proxyUrl} placeholder="https://worker.example.workers.dev" onChange={e=>setAi({proxyUrl:e.target.value})}/></label><label className="field"><span>Mesh type</span><select value={settings.ai.modelType} onChange={e=>setAi({modelType:e.target.value as 'standard'|'lowpoly'})}><option value="standard">Standard</option><option value="lowpoly">Low poly</option></select></label><NumberField label="Target polygons" value={settings.ai.targetPolycount} min={1000} step={1000} suffix="" onChange={n=>setAi({targetPolycount:Math.round(n)})}/></Section>}
 
-    <button className="generate" onClick={generate}>Generate slices & sheets</button>
+    <div className="generate-bar">
+      <div className={count>LAYER_SOFT_LIMIT?'generate-summary alert':'generate-summary'}>
+        <b>{count} {mode==='slabs'?'slabs':'layers'}</b>
+        <span>{mode==='terraced'?`${(relief?settings.relief.depth:keptDepth).toFixed(2)} in deep`:mode==='slabs'?`${(count*pitch-Math.max(0,settings.wallArt.slabGap)).toFixed(1)} in ${settings.wallArt.slabDirection==='horizontal'?'tall':'wide'}`:`${(count*t).toFixed(2)} in tall`}</span>
+        <span>{t} in stock{mode==='slabs'&&settings.wallArt.slabGap>0?` · ${settings.wallArt.slabGap} in gaps`:''}</span>
+      </div>
+      <button className="generate" onClick={generate}>Generate slices & sheets</button>
+    </div>
   </aside>;
 }

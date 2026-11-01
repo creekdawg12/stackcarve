@@ -4,6 +4,7 @@ import { sheetToDxf } from './dxf';
 import { sheetToSvg } from './svg';
 import { makeProject } from './project';
 import { downloadBlob } from '../utils/files';
+import { buildChecklist, checklistText } from './checklist';
 
 export async function exportAll(name: string, result: PipelineResult, settings: ProjectSettings, sourceAsset: SourceAsset | null) {
   const safe = name.trim().replace(/[^a-z0-9_-]+/gi, '_') || 'stackcarve';
@@ -37,6 +38,7 @@ export async function exportAll(name: string, result: PipelineResult, settings: 
   } else {
     notes.push('Stack layers bottom (1) to top on the dowel columns listed in the DOWEL layer.');
   }
+  notes.push('', 'BEFORE YOU CUT', checklistText(buildChecklist(result, settings)));
   notes.push('', 'Warnings at export time:', ...result.warnings.map(w => `- [${w.severity}] ${w.message}`));
   zip.file(`${safe}_assembly.txt`, notes.join('\n'));
   zip.file(`${safe}_sheet-map.csv`, ['sheet,part,layer,rotation,x,y,nested_in', ...result.sheets.flatMap(sheet => sheet.placements.map(p => {
