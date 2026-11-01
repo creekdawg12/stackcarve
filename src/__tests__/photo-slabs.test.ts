@@ -127,7 +127,6 @@ describe('slabs from a heightmap', () => {
         ...DEFAULT_SETTINGS,
         inputMode: 'relief',
         buildMode: 'slabs',
-        targetHeight: 3,
         materialThickness: 0.25,
         minFeature: 0.2,
         wallThickness: 0.5,
@@ -135,7 +134,7 @@ describe('slabs from a heightmap', () => {
         dowelEdgeClearance: 0.12,
         textHeight: 0.3,
         minTextHeight: 0.15,
-        relief: { ...relief, baseDepth: 0.75 },
+        relief: { ...relief, baseDepth: 0.75, depth: 3 },
         wallArt: { ...DEFAULT_SETTINGS.wallArt, slabDirection: direction, slabGap: 0.25, backZoneDepth: 0.6, rodHoleDiameter: 0.2, backerPlate: true }
       };
       const result = await runPipeline({ settings, heightmap: map });

@@ -77,13 +77,14 @@ export function placeDowels(layers: SliceLayer[], diameter: number, edgeClearanc
   const safeClearance = r + edgeClearance;
   let columnCounter = 1;
   const glueOnly: string[] = [];
+  const orphans: { label: string; id: string; layer: number }[] = [];
 
   for (let i = 0; i < layers.length - 1; i++) {
     for (const lower of layers[i].parts) {
       if (lower.role === 'backer') continue;
       const upper = bestMatch(lower, layers[i + 1]);
       if (!upper) {
-        warnings.push({ id: `dowel-no-neighbor-${lower.id}`, severity: 'warning', message: `${lower.label} has no overlapping part in the next layer.`, partId: lower.id, layerIndex: i });
+        orphans.push({ label: lower.label, id: lower.id, layer: i });
         continue;
       }
       let cover: Polyline[] | undefined;
@@ -132,6 +133,18 @@ export function placeDowels(layers: SliceLayer[], diameter: number, edgeClearanc
         if (uniqueHoles(upper, p)) upper.dowels.push({ ...hole });
       }
     }
+  }
+  if (orphans.length) {
+    const list = orphans.slice(0, 8).map(o => o.label).join(', ') + (orphans.length > 8 ? '…' : '');
+    warnings.push({
+      id: 'dowel-orphans',
+      severity: options.hidePins ? 'info' : 'warning',
+      message: options.hidePins
+        ? `${orphans.length} part${orphans.length === 1 ? '' : 's'} ${orphans.length === 1 ? 'is' : 'are'} the front of a feature with nothing above (${list}); glued only, which is normal for wall art.`
+        : `${orphans.length} part${orphans.length === 1 ? '' : 's'} have nothing above them to dowel into (${list}). Check they are meant to be the top of a feature.`,
+      partId: orphans[0].id,
+      layerIndex: orphans[0].layer
+    });
   }
   if (glueOnly.length) {
     warnings.push({ id: 'pins-glue-only', severity: 'info', message: `${glueOnly.length} interface${glueOnly.length === 1 ? '' : 's'} glued without pins so no hole shows on a visible face: ${glueOnly.slice(0, 8).join(', ')}${glueOnly.length > 8 ? '…' : ''}.` });

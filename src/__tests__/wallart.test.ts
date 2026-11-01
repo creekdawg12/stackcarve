@@ -213,16 +213,20 @@ describe('photo relief', () => {
       const r = Math.hypot(dx, dy);
       values[y * width + x] = r > 0.9 ? 0 : Math.max(0, 1 - r * r);
     }
-    const settings: ProjectSettings = { ...DEFAULT_SETTINGS, inputMode: 'relief', targetHeight: 1.5, materialThickness: 0.25, wallThickness: 0.6, overlapMargin: 0.3, dowelDiameter: 0.25, dowelEdgeClearance: 0.15, textHeight: 0.3, minTextHeight: 0.15, relief: { ...DEFAULT_SETTINGS.relief, finishedWidth: 12 } };
+    const settings: ProjectSettings = { ...DEFAULT_SETTINGS, inputMode: 'relief', buildMode: 'terraced', materialThickness: 0.25, wallThickness: 0.6, overlapMargin: 0.3, dowelDiameter: 0.25, dowelEdgeClearance: 0.15, textHeight: 0.3, minTextHeight: 0.15, relief: { ...DEFAULT_SETTINGS.relief, finishedWidth: 12, depth: 1.5 } };
     const result = await runPipeline({ settings, heightmap: { width, height, values, previewUrl: '' } });
     expect(result.buildMode).toBe('terraced');
-    expect(result.layers).toHaveLength(6);
+    // 1.5 in at 0.25 in is 6 terraces; the top one (depth exactly 1.0) has nothing to cut and is trimmed.
+    expect(result.layers.length).toBeGreaterThanOrEqual(5);
+    expect(result.layers.length).toBeLessThanOrEqual(6);
+    expect(result.warnings.some(w => w.id === 'trimmed-layers')).toBe(true);
     const areas = result.layers.map(l => l.parts.reduce((s, p) => s + area(p.outer), 0));
     for (let i = 0; i < areas.length - 1; i++) expect(areas[i]).toBeGreaterThan(areas[i + 1]);
     expect(result.layers[0].parts[0].hollowCuts).toHaveLength(0); // reliefBaseSolid
     expect(result.layers[1].parts[0].hollowCuts.length).toBeGreaterThan(0);
     expect(result.layers[0].parts[0].dowels.length).toBeGreaterThanOrEqual(2);
-    for (const p of result.layers[5].parts) { expect(p.dowels).toHaveLength(0); expect(p.etch?.omitted).toBe(true); }
+    const front = result.layers[result.layers.length - 1];
+    for (const p of front.parts) { expect(p.dowels).toHaveLength(0); expect(p.etch?.omitted).toBe(true); }
     assertCleanNesting(result, settings);
   });
 });

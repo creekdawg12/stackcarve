@@ -8,7 +8,7 @@ import { fileToDataUrl, dataUrlToFile, downloadBlob } from '../utils/files';
 import { runPipeline } from '../engine/pipeline';
 import { MeshyProvider } from '../providers/meshy';
 import { decodeRelief, makeProject, parseProject } from '../export/project';
-import { MODE_PRESETS, SHEET_PRESETS, THICKNESS_PRESETS } from '../defaults';
+import { INPUT_PRESETS, LAYER_SOFT_LIMIT, MODE_PRESETS, SHEET_PRESETS, THICKNESS_PRESETS } from '../defaults';
 import { measureOriented } from '../mesh/measure';
 import type { BuildMode, ReliefBase } from '../types';
 
@@ -52,7 +52,7 @@ export function ControlPanel({ projectName, setProjectName }: { projectName: str
   const reliefHeight = reliefBase ? settings.relief.finishedWidth * (reliefBase.height - 1) / Math.max(1, reliefBase.width - 1) : settings.relief.finishedWidth;
   const stackSpan = mode === 'slabs'
     ? (relief ? (settings.wallArt.slabDirection === 'horizontal' ? reliefHeight : settings.relief.finishedWidth) : (settings.wallArt.slabDirection === 'horizontal' ? settings.targetHeight : (scaled?.width ?? settings.targetHeight)))
-    : (mode === 'terraced' && !relief ? keptDepth : settings.targetHeight);
+    : (mode === 'terraced' ? (relief ? settings.relief.depth : keptDepth) : settings.targetHeight);
   const count = Math.max(1, Math.round((stackSpan + (mode === 'slabs' ? Math.max(0, settings.wallArt.slabGap) : 0)) / pitch));
 
   const loadMesh = async (file: File) => {
@@ -109,10 +109,32 @@ export function ControlPanel({ projectName, setProjectName }: { projectName: str
     } catch(e) { dispatch({type:'busy',label:null,status:`Cutout failed: ${e instanceof Error?e.message:String(e)}. The model downloads from huggingface.co and cdn.jsdelivr.net on first use; check the connection and try again.`}); }
   };
 
+  const loadSample = async () => {
+    dispatch({type:'busy',label:'Loading sample',progress:10,status:'Fetching the sample head…'});
+    try {
+      const res = await fetch(`${import.meta.env.BASE_URL}samples/test-head.stl`);
+      if (!res.ok) throw new Error(`Sample not found (${res.status})`);
+      const blob = await res.blob();
+      await loadMesh(new File([blob], 'sample-head.stl', { type: 'model/stl' }));
+    } catch(e) { dispatch({type:'busy',label:null,status:e instanceof Error?e.message:String(e)}); }
+  };
+
+  const depthDone = reliefBase?.source === 'depth';
+  const photoSteps = [
+    { label: 'Photo', done: !!reliefBase },
+    { label: 'Depth', done: depthDone },
+    { label: 'Cut out', done: !!mask },
+    { label: 'Build', done: !!result }
+  ];
+  const nextStep = photoSteps.findIndex(s => !s.done);
+
   const thresholdMask = () => { if (reliefBase) dispatch({type:'mask',mask:maskFromThreshold(reliefBase, settings.relief.backgroundThreshold)}); };
   const clearMask = () => dispatch({type:'mask',mask:null});
 
   const generate = async () => {
+    if (relief && !reliefBase) return dispatch({type:'busy',label:null,status:'Load a photo first (Input section).'});
+    if (!relief && !mesh) return dispatch({type:'busy',label:null,status:'Load a mesh first (Input section).'});
+    if (count > LAYER_SOFT_LIMIT && !window.confirm(`This will generate about ${count} pieces. Continue?`)) return;
     dispatch({type:'busy',label:'Generating cut geometry',progress:10,status:'Sectioning and rebuilding contours…'});
     try {
       const map = relief && reliefBase ? composeHeightmap(reliefBase, { settings: settings.relief, mask, preview: false }) : null;
@@ -154,10 +176,12 @@ export function ControlPanel({ projectName, setProjectName }: { projectName: str
   return <aside className="controls">
     <div className="project-row"><input className="project-name" value={projectName} onChange={e=>setProjectName(e.target.value)} aria-label="Project name"/><button onClick={saveProject}>Save</button><button onClick={()=>projectInput.current?.click()}>Load</button><input ref={projectInput} hidden type="file" accept=".json" onChange={e=>e.target.files?.[0]&&loadProject(e.target.files[0])}/></div>
 
-    <section><h3>Input</h3><div className="segmented">{(['mesh','relief','ai'] as const).map(m=><button className={settings.inputMode===m?'active':''} key={m} onClick={()=>patchSettings({inputMode:m})}>{m==='mesh'?'Mesh':m==='relief'?'Photo':'AI statue'}</button>)}</div>
-      {settings.inputMode==='mesh'&&<label className="drop"><input type="file" accept=".stl,.obj,.glb" onChange={e=>e.target.files?.[0]&&loadMesh(e.target.files[0])}/><b>Load STL, OBJ, or GLB</b><span>{mesh?.sourceName??'No mesh loaded'}</span></label>}
-      {relief&&<><label className="drop"><input type="file" accept="image/png,image/jpeg,image/webp" onChange={e=>e.target.files?.[0]&&loadPhoto(e.target.files[0])}/><b>Load a photo</b><span>{sourceAsset?.kind==='image'?sourceAsset.name:'Head-on, filling the frame, plain background'}</span></label>
-        <div className="btn-row"><button className="primary" disabled={!reliefBase} onClick={runDepth}>1. Estimate depth (AI)</button><button className="primary" disabled={!reliefBase} onClick={runCutout}>2. Cut out subject (AI)</button></div>
+    <section><h3>Input</h3><div className="segmented">{(['mesh','relief','ai'] as const).map(m=><button className={settings.inputMode===m?'active':''} key={m} onClick={()=>patchSettings({inputMode:m,...(m==='relief'&&settings.inputMode!=='relief'?INPUT_PRESETS.relief:{})})}>{m==='mesh'?'Mesh':m==='relief'?'Photo':'AI statue'}</button>)}</div>
+      {settings.inputMode==='mesh'&&<><label className="drop"><input type="file" accept=".stl,.obj,.glb" onChange={e=>e.target.files?.[0]&&loadMesh(e.target.files[0])}/><b>Load STL, OBJ, or GLB</b><span>{mesh?.sourceName??'No mesh loaded'}</span></label>
+        {!mesh&&<button className="link-btn" onClick={loadSample}>No model handy? Try the sample head</button>}</>}
+      {relief&&<><div className="steps">{photoSteps.map((st,i)=><span key={st.label} className={st.done?'done':i===nextStep?'next':''}>{st.done?'✓ ':`${i+1}. `}{st.label}</span>)}</div>
+        <label className="drop"><input type="file" accept="image/png,image/jpeg,image/webp" onChange={e=>e.target.files?.[0]&&loadPhoto(e.target.files[0])}/><b>Load a photo</b><span>{sourceAsset?.kind==='image'?sourceAsset.name:'Head-on, filling the frame, plain background'}</span></label>
+        <div className="btn-row"><button className={depthDone?'done':'primary'} disabled={!reliefBase} onClick={runDepth}>{depthDone?'✓ Depth ready (redo)':'1. Estimate depth (AI)'}</button><button className={mask?'done':'primary'} disabled={!reliefBase} onClick={runCutout}>{mask?'✓ Cut out (redo)':'2. Cut out subject (AI)'}</button></div>
         <div className="btn-row"><button disabled={!reliefBase} onClick={thresholdMask}>Mask from threshold</button><button disabled={!mask} onClick={clearMask}>Clear mask</button></div>
         <p className="note">Models download once (roughly 50 to 150 MB total) and run on this computer. Paint the mask in the Photo tab. The cutout model (RMBG-1.4) is licensed for non-commercial use.</p></>}
       {settings.inputMode==='ai'&&<><label className="drop"><input type="file" accept="image/png,image/jpeg" onChange={e=>{const f=e.target.files?.[0];if(f){setAiImage(f);loadPhoto(f)}}}/><b>Load statue photo</b><span>{aiImage?.name??(sourceAsset?.kind==='image'?sourceAsset.name:'No image loaded')}</span></label><button className="primary full" onClick={generateAi}>Generate GLB with Meshy</button></>}
@@ -178,7 +202,10 @@ export function ControlPanel({ projectName, setProjectName }: { projectName: str
     <section><h3>Scale & layers</h3>
       {relief&&<NumberField label="Finished width on wall" value={settings.relief.finishedWidth} min={1} onChange={n=>setRelief({finishedWidth:n})}/>}
       {relief&&reliefBase&&<div className="computed"><span>Finished height</span><b>{(settings.relief.finishedWidth*(reliefBase.height-1)/Math.max(1,reliefBase.width-1)).toFixed(1)} in</b></div>}
-      <NumberField label={relief?'Relief depth (nose off the wall)':wallArt?'Finished height on wall':'Target height'} value={settings.targetHeight} min={.1} onChange={n=>patchSettings({targetHeight:n})}/>
+      {relief
+        ? <NumberField label="Relief depth (nose off the wall)" value={settings.relief.depth} min={.1} onChange={n=>setRelief({depth:n})}/>
+        : <NumberField label={wallArt?'Finished height on wall':'Target height'} value={settings.targetHeight} min={.1} onChange={n=>patchSettings({targetHeight:n})}/>}
+      {relief&&<p className="note">A face plaque usually wants 2 to 4 in of depth for a 20 in wide piece. Depth divided by thickness is the layer count.</p>}
       {wallArt&&!relief&&<>
         {scaled&&<div className="computed"><span>Model at this height</span><b>{scaled.width.toFixed(1)} wide × {scaled.depth.toFixed(1)} deep</b></div>}
         <NumberField label="Relief depth kept from the front (0 = all)" value={settings.wallArt.reliefDepth} min={0} onChange={n=>setWall({reliefDepth:n})}/>
@@ -187,7 +214,8 @@ export function ControlPanel({ projectName, setProjectName }: { projectName: str
       </>}
       <NumberField label="Material thickness (measure it)" value={t} min={.05} step={.001} onChange={n=>patchSettings({materialThickness:n})}/>
       <div className="chips">{THICKNESS_PRESETS.map(p=><button key={p.label} className={near(t,p.value)?'chip active':'chip'} onClick={()=>patchSettings({materialThickness:p.value})}>{p.label}</button>)}</div>
-      <div className="computed"><span>{mode==='slabs'?'Slab count (before trimming)':'Layer count'}</span><b>{count}</b></div>
+      <div className={count>LAYER_SOFT_LIMIT?'computed alert':'computed'}><span>{mode==='slabs'?'Slab count (before trimming)':'Layer count'}</span><b>{count}{count>LAYER_SOFT_LIMIT?' (a lot)':''}</b></div>
+      {count>LAYER_SOFT_LIMIT&&<p className="note alert">{count} pieces will take a while to cut and glue. Thicker stock, a bigger gap, or less relief depth brings it down.</p>}
       <div className="computed"><span>{mode==='terraced'?'Achieved depth':mode==='slabs'?(settings.wallArt.slabDirection==='horizontal'?'Stack height':'Stack width'):'Achieved height'}</span><b>{(count*pitch-(mode==='slabs'?Math.max(0,settings.wallArt.slabGap):0)).toFixed(3)} in</b></div>
       {mode==='terraced'&&!relief&&<label className="toggle"><input type="checkbox" checked={settings.wallArt.basePlate} onChange={e=>setWall({basePlate:e.target.checked})}/><span>Base plate: back layer becomes the full silhouette</span></label>}
       {mode==='slabs'&&<>

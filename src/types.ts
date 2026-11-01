@@ -39,6 +39,8 @@ export interface ReliefSettings {
   depthFloor: number;
   /** Slabs from a photo: minimum depth in inches inside the silhouette, so every slab has a back to glue and drill. */
   baseDepth: number;
+  /** How far the closest point of the photo stands off the wall, in inches. */
+  depth: number;
 }
 
 /** Raw normalised photo depth before the curve, 1 = closest to the viewer. */

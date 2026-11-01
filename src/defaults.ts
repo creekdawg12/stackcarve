@@ -46,9 +46,10 @@ export const DEFAULT_SETTINGS: ProjectSettings = {
     blurPx: 1.2,
     backgroundThreshold: 0.08,
     minIslandArea: 0.15,
-    finishedWidth: 24,
+    finishedWidth: 20,
     depthFloor: 0,
-    baseDepth: 1
+    baseDepth: 1,
+    depth: 2.5
   },
   ai: {
     provider: 'meshy',
@@ -65,6 +66,17 @@ export const MODE_PRESETS: Record<ProjectSettings['buildMode'], Partial<ProjectS
   terraced: { targetHeight: 24, materialThickness: 0.25, wallThickness: 0.75, overlapMargin: 0.375, partGap: 0.3, minFeature: 0.25 },
   slabs: { targetHeight: 24, materialThickness: 0.25, wallThickness: 0.75, overlapMargin: 0.375, partGap: 0.3, minFeature: 0.25 }
 };
+
+/** Settings that change when the input changes: photos are always wall art, meshes default to a statue. */
+export const INPUT_PRESETS: Record<ProjectSettings['inputMode'], Partial<ProjectSettings>> = {
+  mesh: {},
+  ai: {},
+  relief: { buildMode: 'terraced', materialThickness: 0.25, wallThickness: 0.75, overlapMargin: 0.375, partGap: 0.3, minFeature: 0.25, hollowEnabled: true }
+};
+
+/** Above this many pieces the app asks for confirmation; above the hard cap it refuses. */
+export const LAYER_SOFT_LIMIT = 120;
+export const LAYER_HARD_LIMIT = 400;
 
 export const THICKNESS_PRESETS: { label: string; value: number }[] = [
   { label: '1/8', value: 0.125 },

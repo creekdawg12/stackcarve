@@ -9,7 +9,7 @@ import { placeDowels } from './dowels';
 import { buildEtch } from './hershey';
 import { nestParts } from './nest';
 import { backStrip, clipRegionsToBack, coveredZone, placeRods, silhouetteOfLayers, slabSilhouette } from './wallart';
-import { STOCK_SHEET_AREA } from '../defaults';
+import { LAYER_HARD_LIMIT, STOCK_SHEET_AREA } from '../defaults';
 
 function makeLayers(sections: SectionRegion[][], thickness: number): SliceLayer[] {
   return sections.map((regions, layerIndex) => ({
@@ -87,11 +87,12 @@ export async function runPipeline(input: {
 
   if (relief) {
     if (!input.heightmap) throw new Error('Load a photo before generating relief slices.');
+    const reliefDepth = settings.relief.depth;
     if (mode === 'slabs') {
       const r = slabsFromHeightmap(input.heightmap, {
         finishedWidth: settings.relief.finishedWidth,
-        reliefDepth: settings.targetHeight,
-        baseDepth: Math.min(settings.relief.baseDepth, settings.targetHeight),
+        reliefDepth,
+        baseDepth: Math.min(settings.relief.baseDepth, reliefDepth),
         thickness: t,
         gap,
         direction: slabDirection,
@@ -102,13 +103,14 @@ export async function runPipeline(input: {
       });
       sections.push(...r.sections);
       backY = 0;
-      achievedDepth = settings.targetHeight;
+      achievedDepth = reliefDepth;
       stackExtent = r.stackExtent;
       achievedHeight = slabDirection === 'horizontal' ? r.stackExtent : r.finishedHeight;
     } else {
-      const layerCount = Math.max(1, Math.round(settings.targetHeight / t));
-      achievedHeight = layerCount * t;
-      achievedDepth = achievedHeight;
+      const layerCount = Math.max(1, Math.round(reliefDepth / t));
+      if (layerCount > LAYER_HARD_LIMIT) throw new Error(`${layerCount} layers is more than this tool will cut (${LAYER_HARD_LIMIT}). Lower the relief depth or use thicker stock.`);
+      achievedHeight = settings.relief.finishedWidth * (input.heightmap.height - 1) / Math.max(1, input.heightmap.width - 1);
+      achievedDepth = layerCount * t;
       for (let i = 0; i < layerCount; i++) {
         const terrace = settings.relief.backgroundThreshold + (1 - settings.relief.backgroundThreshold) * (i / Math.max(1, layerCount - 1));
         const loops = marchingSquares(input.heightmap, terrace, settings.relief.finishedWidth, Math.max(0.01, settings.minFeature * 0.25), settings.relief.minIslandArea);
@@ -172,6 +174,8 @@ export async function runPipeline(input: {
     }
   }
 
+  if (sections.length > LAYER_HARD_LIMIT) throw new Error(`${sections.length} ${mode === 'slabs' ? 'slabs' : 'layers'} is more than this tool will cut (${LAYER_HARD_LIMIT}). Use thicker stock, a bigger gap, or a smaller piece.`);
+
   // Slivers thinner than the minimum feature cannot be cut; drop them rather than nesting junk.
   let slivers = 0;
   for (const regions of sections) {
@@ -187,9 +191,10 @@ export async function runPipeline(input: {
 
   // Wall art: slabs or layers that fall entirely behind the back plane do not exist. Trim them
   // from the ends so numbering starts at the first real piece.
-  if (wallArt && (!relief || mode === 'slabs')) {
+  if (wallArt) {
     let first = 0, last = sections.length - 1;
-    while (first <= last && !sections[first].length) first++;
+    // Terraced keeps layer 1 (the wall side) even if the photo's background made it empty; slabs trim both ends.
+    if (mode === 'slabs' || !relief) while (first <= last && !sections[first].length) first++;
     while (last >= first && !sections[last].length) last--;
     const dropped = sections.length - (last - first + 1);
     if (dropped > 0 && last >= first) {
@@ -204,9 +209,12 @@ export async function runPipeline(input: {
       warnings.push({ id: 'trimmed-layers', severity: 'info', message: `${dropped} ${mode === 'slabs' ? 'slab' : 'layer'}${dropped === 1 ? '' : 's'} at the ends had nothing to cut (behind the back plane or too thin) and ${dropped === 1 ? 'was' : 'were'} dropped. Finished ${what} is ${size.toFixed(2)} in.` });
     }
   }
-  for (let i = 0; i < sections.length; i++) {
-    if (!sections[i].length && (wallArt || (i > 0 && i < sections.length - 1))) {
-      warnings.push({ id: `gap-layer-${i}`, severity: 'warning', message: `${mode === 'slabs' ? 'Slab' : 'Layer'} ${i + 1} has nothing cuttable; shim that position with a scrap of the same stock.`, layerIndex: i });
+  {
+    const empty: number[] = [];
+    for (let i = 0; i < sections.length; i++) if (!sections[i].length && (wallArt || (i > 0 && i < sections.length - 1))) empty.push(i + 1);
+    if (empty.length) {
+      const list = empty.length > 10 ? `${empty.slice(0, 10).join(', ')} and ${empty.length - 10} more` : empty.join(', ');
+      warnings.push({ id: 'gap-layers', severity: 'warning', message: `${empty.length} ${mode === 'slabs' ? 'slab' : 'layer'} position${empty.length === 1 ? '' : 's'} (${list}) ${empty.length === 1 ? 'has' : 'have'} nothing cuttable; shim ${empty.length === 1 ? 'it' : 'them'} with scrap of the same stock, or reduce the relief depth so the thin tip disappears.`, layerIndex: empty[0] - 1 });
     }
   }
 

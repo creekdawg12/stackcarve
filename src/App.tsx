@@ -25,7 +25,7 @@ function Workspace() {
         {tab==='slices'&&<SlicesViewport/>}
         {tab==='sheets'&&<SheetsView projectName={projectName}/>} 
         {busy&&<div className="busy-overlay"><div className="spinner"/><b>{busy}</b><span>{status}</span><div className="progress"><i style={{width:`${Math.max(2,progress)}%`}}/></div></div>}
-        <div className="statusbar"><span>{status}</span>{selected&&<b>Selected {selected.label} · Layer {selectedLayer+1}</b>}</div>
+        <div className={/failed|cannot|first\b|too |more than/i.test(status)?'statusbar error':'statusbar'}><span>{status}</span>{selected&&<b>Selected {selected.label} · Layer {selectedLayer+1}</b>}</div>
       </section>
       <WarningsPanel/>
     </main>
