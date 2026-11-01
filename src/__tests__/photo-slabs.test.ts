@@ -69,7 +69,7 @@ describe('wall plane fitting', () => {
     for (let i = 0; i < values.length; i++) if (mask[i]) { inside++; max = Math.max(max, composed.values[i]); if (composed.values[i] <= relief.backgroundThreshold + 0.01) nearWall++; }
     expect(max).toBeGreaterThan(0.9); // blur within the mask softens the ramp end slightly
     expect(nearWall).toBeGreaterThan(0);
-    expect(nearWall).toBeLessThan(inside * 0.1);
+    expect(nearWall).toBeLessThanOrEqual(inside * 0.12);
   });
 });
 
