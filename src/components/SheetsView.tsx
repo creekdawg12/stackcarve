@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { buildChecklist, checklistText } from '../export/checklist';
 import { useStore } from '../store';
 import { centroid, circlePolyline, transformPolyline } from '../geometry/polygon';
@@ -12,7 +12,7 @@ function d(points: {x:number;y:number}[], closed = true) {
 }
 
 export function SheetsView({ projectName }: { projectName: string }) {
-  const { result, settings, sourceAsset, selectedPartId, dispatch } = useStore();
+  const { result, settings, sourceAsset, selectedPartId, stale, dispatch } = useStore();
   const [page, setPage] = useState(0);
   const stageRef = useRef<HTMLDivElement>(null);
   const parts = useMemo(() => result?.layers.flatMap(l => l.parts) ?? [], [result]);
@@ -26,12 +26,14 @@ export function SheetsView({ projectName }: { projectName: string }) {
     const text = kind === 'dxf' ? sheetToDxf(sheet, parts, settings) : sheetToSvg(sheet, parts, settings);
     downloadBlob(new Blob([text], { type: kind === 'dxf' ? 'application/dxf' : 'image/svg+xml' }), `${projectName || 'stackcarve'}_sheet_${String(index+1).padStart(2,'0')}.${kind}`);
   };
+  const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
   return <div className="sheets-view">
     <div className="sheet-toolbar">
-      <div className="pager"><button onClick={()=>{setPage(Math.max(0,index-1));view.reset();}} disabled={index===0}>←</button><b>Sheet {index+1} / {result.sheets.length}</b><button onClick={()=>{setPage(Math.min(result.sheets.length-1,index+1));view.reset();}} disabled={index===result.sheets.length-1}>→</button></div>
-      <div className="export-actions"><button onClick={()=>view.zoomBy(1.25)} title="Zoom in">+</button><button onClick={()=>view.zoomBy(0.8)} title="Zoom out">−</button><button onClick={()=>view.reset()} title="Fit the sheet">Fit</button><button onClick={()=>exportSheet('dxf')}>DXF</button><button onClick={()=>exportSheet('svg')}>SVG</button><button className="primary" onClick={()=>exportAll(projectName,result,settings,sourceAsset)}>Export ZIP</button></div>
+      <div className="pager"><button onClick={()=>{setPage(Math.max(0,index-1));view.reset();}} disabled={index===0} aria-label="Previous sheet">←</button><b>Sheet {index+1} / {result.sheets.length}</b><button onClick={()=>{setPage(Math.min(result.sheets.length-1,index+1));view.reset();}} disabled={index===result.sheets.length-1} aria-label="Next sheet">→</button></div>
+      <ExportMenu disabled={stale} sheetNumber={index+1} onZip={()=>exportAll(projectName,result,settings,sourceAsset)} onDxf={()=>exportSheet('dxf')} onSvg={()=>exportSheet('svg')}/>
     </div>
     <div className="sheet-stage" ref={stageRef} onPointerDown={view.onPointerDown} onPointerMove={view.onPointerMove} onPointerUp={view.onPointerUp} onPointerCancel={view.onPointerUp} onWheel={view.onWheel} style={{touchAction:'none',cursor:view.dragging?'grabbing':'grab'}}>
+      <div className="view-buttons" onPointerDown={e=>e.stopPropagation()}><button onClick={()=>view.zoomBy(1.25)} aria-label="Zoom in">+</button><button onClick={()=>view.zoomBy(0.8)} aria-label="Zoom out">−</button><button onClick={()=>view.reset()} aria-label="Fit the sheet">Fit</button></div>
       <svg viewBox={view.viewBox(sheet.width, sheet.height)} aria-label={`Sheet ${index+1}`}>
         <rect x="0" y="0" width={sheet.width} height={sheet.height} className="sheet-outline"/>
         <g transform={`translate(0 ${sheet.height}) scale(1 -1)`}>
@@ -49,14 +51,38 @@ export function SheetsView({ projectName }: { projectName: string }) {
         {sheet.placements.map(pl=>{const part=parts.find(p=>p.id===pl.partId)!;const c=transformPolyline([centroid(part.outer)],pl.x,pl.y,pl.rotation)[0];return <text key={`t-${part.id}`} x={c.x} y={sheet.height-c.y} className="sheet-label">{part.label}</text>})}
       </svg>
     </div>
-    <div className="sheet-stats"><span>{sheet.placements.length} parts</span><span>{(sheet.utilization*100).toFixed(1)}% material utilization</span><span>{settings.sheetWidth} × {settings.sheetHeight} in</span><span>{result.sheets.length} sheets = {result.stockSheets} × 4×8 stock</span></div>
-    <Checklist/>
+    <div className="sheet-stats"><span>{plural(sheet.placements.length,'part')}</span><span>{(sheet.utilization*100).toFixed(1)}% material utilization</span><span>{sheet.width} × {sheet.height} in</span><span>{plural(result.sheets.length,'sheet')} = {result.stockSheets} × 4×8 stock</span></div>
+    {!stale&&<Checklist/>}
+  </div>;
+}
+
+/** One Export button with a menu: the ZIP bundle is the normal path; single-sheet DXF and SVG for quick checks. */
+function ExportMenu({ disabled, sheetNumber, onZip, onDxf, onSvg }: { disabled: boolean; sheetNumber: number; onZip: () => void; onDxf: () => void; onSvg: () => void }) {
+  const [open, setOpen] = useState(false);
+  const host = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: PointerEvent) => { if (!host.current?.contains(e.target as Node)) setOpen(false); };
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('pointerdown', close); document.addEventListener('keydown', esc);
+    return () => { document.removeEventListener('pointerdown', close); document.removeEventListener('keydown', esc); };
+  }, [open]);
+  const run = (fn: () => void) => { setOpen(false); fn(); };
+  return <div className="export-menu" ref={host}>
+    <button className="primary" onClick={() => setOpen(o => !o)} aria-haspopup="menu" aria-expanded={open} title={disabled ? 'Regenerate before exporting' : undefined}>Export ▾</button>
+    {open && <div className="menu" role="menu">
+      {disabled && <div className="menu-note">Settings changed. Regenerate before exporting.</div>}
+      <button role="menuitem" disabled={disabled} onClick={() => run(onZip)}><b>ZIP bundle</b><small>All sheets as DXF and SVG, plus the checklist</small></button>
+      <button role="menuitem" disabled={disabled} onClick={() => run(onDxf)}><b>Sheet {sheetNumber} as DXF</b><small>Layers: OUTER_CUT, INNER_CUT, DOWEL, ETCH</small></button>
+      <button role="menuitem" disabled={disabled} onClick={() => run(onSvg)}><b>Sheet {sheetNumber} as SVG</b><small>For a quick look or a laser</small></button>
+    </div>}
   </div>;
 }
 
 function Checklist() {
   const { result, settings } = useStore();
-  const [open, setOpen] = useState(true);
+  // Short screens (iPad landscape, laptops) need the room for the drawing; start collapsed there.
+  const [open, setOpen] = useState(() => typeof window === 'undefined' || window.innerHeight >= 900);
   const [done, setDone] = useState<Record<number, boolean>>({});
   const [copied, setCopied] = useState(false);
   const items = useMemo(() => result ? buildChecklist(result, settings) : [], [result, settings]);
@@ -68,7 +94,7 @@ function Checklist() {
   let lastGroup = '';
   return <div className={open ? 'checklist' : 'checklist collapsed'}>
     <div className="checklist-head">
-      <button className="link-btn" onClick={() => setOpen(o => !o)}>{open ? '▾' : '▸'} Before you cut · {checked}/{items.length}</button>
+      <button className="link-btn" onClick={() => setOpen(o => !o)} aria-expanded={open}>{open ? '▾' : '▸'} Before you cut · {checked}/{items.length}</button>
       <button onClick={copy}>{copied ? 'Copied' : 'Copy checklist'}</button>
     </div>
     {open && <ol>

@@ -95,3 +95,83 @@
 .crash-card code { display: block; white-space: pre-wrap; word-break: break-word; font-size: 12px; padding: 8px 10px; border-radius: 8px; background: rgba(0,0,0,.25); max-height: 120px; overflow: auto; }
 .crash-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .crash-actions button { min-height: 40px; padding: 0 14px; }
+
+/* ---- Audit pass: layout and copy fixes ---- */
+/* The panel's own bottom padding left a strip where fields showed under the sticky Generate bar. */
+.controls{padding-bottom:0}
+.generate-bar{padding-bottom:14px;border-top:1px solid var(--line);box-shadow:0 -12px 24px var(--panel)}
+.drawer-head{display:none;align-items:center;justify-content:space-between;padding:2px 0 10px;border-bottom:1px solid var(--line);margin-bottom:10px}
+.drawer-head b{font-size:15px}
+.drawer-head button{border:1px solid var(--line);background:#222a30;border-radius:6px;padding:7px 12px;font-weight:700;cursor:pointer}
+
+/* Status bar: status text on the left, selection and the Notes button on the right */
+.statusbar>span{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.status-right{display:flex;align-items:center;gap:10px;flex:none}
+.notes-btn{display:none;align-items:center;border:1px solid #45515a;background:#1b2126;color:#dce4e9;border-radius:14px;padding:4px 10px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap}
+.notes-btn.hot{border-color:#7a5323;background:#2a1e10;color:var(--amber2)}
+.panel-title .close{display:none;margin-left:auto;border:1px solid var(--line);background:#222a30;color:#e1e8ec;border-radius:6px;padding:5px 10px;font-size:11px;font-weight:700;letter-spacing:0;text-transform:none;cursor:pointer}
+.warning.stale-note{display:block;color:var(--amber2);cursor:default;border-bottom:0;padding-bottom:4px}
+.warning.empty{color:var(--muted)}
+.drawer-backdrop{display:none;position:fixed;inset:0;background:#0009;z-index:35}
+
+/* Stale result: keep the old geometry visible with a clear way back */
+.stale-banner{position:absolute;left:50%;bottom:46px;transform:translateX(-50%);z-index:6;display:flex;align-items:center;gap:10px;background:#2a1e10f2;border:1px solid #7a5323;border-radius:8px;padding:8px 10px 8px 14px;color:#ffd79a;font-size:12px;box-shadow:0 10px 30px #000a;max-width:min(92%,520px)}
+.stale-banner button{border:1px solid;border-radius:6px;padding:7px 12px;cursor:pointer;font-size:12px;white-space:nowrap}
+.job-summary.stale span{opacity:.6}.job-summary .stale-tag{opacity:1!important;color:var(--amber2);border-color:#7a5323}
+
+/* Sheets toolbar: pager left, one Export menu right; zoom floats over the drawing */
+.sheet-toolbar{gap:8px}
+.sheet-stage{position:relative}
+.sheets-view .view-buttons{top:10px;right:12px}
+.export-menu{position:relative}
+.export-menu>button{padding:8px 14px;border:1px solid;border-radius:6px;cursor:pointer}
+.export-menu .menu{position:absolute;right:0;top:calc(100% + 6px);z-index:20;min-width:260px;background:#1d2328;border:1px solid #45515a;border-radius:10px;box-shadow:0 16px 40px #000c;padding:6px;display:grid;gap:2px}
+.export-menu .menu button{display:grid;gap:2px;text-align:left;border:0;background:transparent;border-radius:7px;padding:9px 10px;cursor:pointer;color:#e1e8ec}
+.export-menu .menu button:hover:not(:disabled){background:#2d373e}
+.export-menu .menu button:disabled{opacity:.45;cursor:default}
+.export-menu .menu button small{color:var(--muted);font-size:11px}
+.export-menu .menu-note{padding:8px 10px;color:var(--amber2);font-size:11px}
+
+/* Contrast and legibility nudges */
+.input-wrap small{font-size:11px;color:#8d9aa3}
+.steps span{font-size:11px}
+.section-head i{color:#8d9aa3}
+.empty-state{color:#93a0a9}
+
+/* Phone action bar (hidden above 760 px) */
+.mobile-bar{display:none;grid-template-columns:1fr 1fr;gap:8px;padding:8px 10px calc(8px + env(safe-area-inset-bottom));background:#14191d;border-top:1px solid var(--line);z-index:31}
+.mobile-bar button{min-height:44px;border:1px solid var(--line);background:#222a30;border-radius:8px;font-weight:700;cursor:pointer}
+.mobile-bar button.active{background:#2d373e;border-color:#55636d}
+
+@media(max-width:1100px){
+  .notes-btn{display:inline-flex}
+  .warnings-panel.open{display:grid;position:fixed;left:0;right:0;bottom:0;max-height:min(70vh,640px);z-index:40;border-left:0;border-top:1px solid #45515a;border-radius:14px 14px 0 0;box-shadow:0 -20px 60px #000c;grid-template-rows:45px 1fr}
+  .warnings-panel.open .panel-title{border-radius:14px 14px 0 0}
+  .warnings-panel.open .panel-title .close{display:inline-block}
+  .warnings-panel.open .warnings-list{padding-bottom:calc(10px + env(safe-area-inset-bottom))}
+  .drawer-backdrop{display:block}
+}
+
+@media(max-width:760px){
+  .app-shell{grid-template-rows:56px 1fr auto}
+  .mobile-bar{display:grid}
+  .controls.open{display:block;position:fixed;left:0;right:0;top:56px;bottom:0;z-index:30;border-right:0;padding-bottom:0}
+  .controls.open .drawer-head{display:flex}
+  .stale-banner{bottom:44px;font-size:11px;gap:8px}
+  .sheet-toolbar{padding:8px}
+  .pager b{min-width:0}
+}
+@media(max-width:760px){
+  /* The phone action bar carries Generate; the drawer keeps only the summary line. */
+  .controls.open{bottom:calc(61px + env(safe-area-inset-bottom))}
+  .controls.open .generate{display:none}
+  .controls.open .generate-bar{padding-bottom:10px}
+}
+.generate-summary{flex-wrap:wrap;gap:4px 10px}.generate-summary span,.generate-summary b{white-space:nowrap}
+.sheets-view{grid-template-rows:52px 1fr auto auto}
+.sheet-stats{flex-wrap:wrap;gap:4px 18px;padding:8px 12px;min-height:36px}
+@media(max-width:760px){
+  /* Keep the zoom buttons clear of the exploded-view slider on narrow screens */
+  .slices-wrap .view-buttons{top:58px}
+  .explode{grid-template-columns:auto 120px 40px}
+}

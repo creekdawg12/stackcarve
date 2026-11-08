@@ -19,6 +19,8 @@ interface State {
   status: string;
   /** True when AI depth or a mask exists that has not been written to a project file yet. */
   unsavedAi: boolean;
+  /** True when settings changed after the result was generated; the result stays on screen until regenerated. */
+  stale: boolean;
 }
 
 type Action =
@@ -48,22 +50,25 @@ const initialState: State = {
   busy: null,
   progress: 0,
   status: 'Load a mesh or photo to begin.',
-  unsavedAi: false
+  unsavedAi: false,
+  stale: false
 };
 
 function reducer(state: State, action: Action): State {
   switch (action.type) {
     case 'tab': return { ...state, tab: action.value };
-    case 'settings': return { ...state, settings: { ...state.settings, ...action.value }, result: null };
-    case 'source': return { ...state, sourceAsset: action.asset, mesh: action.mesh ?? state.mesh, result: null };
-    case 'mesh': return { ...state, mesh: action.mesh, result: null };
-    case 'reliefBase': return { ...state, reliefBase: action.base, mask: action.mask === undefined ? state.mask : action.mask, result: null, unsavedAi: state.unsavedAi || action.base?.source === 'depth' };
-    case 'mask': return { ...state, mask: action.mask, result: null, unsavedAi: state.unsavedAi || !!action.mask };
-    case 'result': return { ...state, result: action.result, selectedLayer: 0, selectedPartId: null };
+    // Tweaks keep the last result on screen, flagged stale, so the view does not blank on every keystroke.
+    case 'settings': return { ...state, settings: { ...state.settings, ...action.value }, stale: !!state.result };
+    // A new source model or photo makes the old geometry meaningless.
+    case 'source': return { ...state, sourceAsset: action.asset, mesh: action.mesh ?? state.mesh, result: null, stale: false };
+    case 'mesh': return { ...state, mesh: action.mesh, result: null, stale: false };
+    case 'reliefBase': return { ...state, reliefBase: action.base, mask: action.mask === undefined ? state.mask : action.mask, stale: !!state.result, unsavedAi: state.unsavedAi || action.base?.source === 'depth' };
+    case 'mask': return { ...state, mask: action.mask, stale: !!state.result, unsavedAi: state.unsavedAi || !!action.mask };
+    case 'result': return { ...state, result: action.result, stale: false, selectedLayer: 0, selectedPartId: null };
     case 'selectLayer': return { ...state, selectedLayer: action.index };
     case 'selectPart': return { ...state, selectedPartId: action.id };
     case 'busy': return { ...state, busy: action.label, progress: action.progress ?? state.progress, status: action.status ?? state.status };
-    case 'project': return { ...state, settings: action.project.settings, sourceAsset: action.project.sourceAsset, result: null, status: 'Project settings loaded.', unsavedAi: false };
+    case 'project': return { ...state, settings: action.project.settings, sourceAsset: action.project.sourceAsset, result: null, stale: false, status: 'Project settings loaded.', unsavedAi: false };
     case 'saved': return { ...state, unsavedAi: false };
     default: return state;
   }

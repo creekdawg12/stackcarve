@@ -5,17 +5,21 @@ import type { WarningItem } from '../types';
 const ORDER: Record<WarningItem['severity'], number> = { error: 0, warning: 1, info: 2 };
 const TITLE: Record<WarningItem['severity'], string> = { error: 'Needs attention', warning: 'Check before cutting', info: 'Notes' };
 
-/** Warnings grouped by severity, errors first; notes are collapsed so the panel stays readable. */
-export function WarningsPanel() {
-  const { result, dispatch } = useStore();
+/**
+ * Warnings grouped by severity, errors first; notes are collapsed so the panel stays readable.
+ * On wide screens it is the right-hand column; under 1100 px it is a slide-up sheet opened from the status bar.
+ */
+export function WarningsPanel({ open = false, onClose }: { open?: boolean; onClose?: () => void }) {
+  const { result, stale, dispatch } = useStore();
   const [showInfo, setShowInfo] = useState(false);
   const warnings = [...(result?.warnings ?? [])].sort((a, b) => ORDER[a.severity] - ORDER[b.severity]);
   const groups = (['error', 'warning', 'info'] as const).map(sev => ({ sev, items: warnings.filter(w => w.severity === sev) })).filter(g => g.items.length);
   const actionable = warnings.filter(w => w.severity !== 'info').length;
 
-  return <section className="warnings-panel">
-    <div className="panel-title"><span>Live warnings</span><b className={actionable ? 'hot' : ''}>{actionable}</b></div>
+  return <section className={open ? 'warnings-panel open' : 'warnings-panel'} aria-label="Warnings and notes">
+    <div className="panel-title"><span>Live warnings</span><b className={actionable ? 'hot' : ''}>{actionable}</b>{onClose && <button type="button" className="close" onClick={onClose} aria-label="Close">Done</button>}</div>
     <div className="warnings-list">
+      {stale && result && <div className="warning stale-note">From the last generation; settings have changed since.</div>}
       {!warnings.length && <div className="warning empty">{result ? 'Nothing to flag. Check the Slices and Sheets tabs, then export.' : 'Generate a project to see manufacturing checks here.'}</div>}
       {groups.map(g => <div key={g.sev} className="warning-group">
         <button className="group-title" onClick={() => g.sev === 'info' && setShowInfo(v => !v)} disabled={g.sev !== 'info'}>

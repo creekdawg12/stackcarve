@@ -3,13 +3,14 @@ import { useStore } from '../store';
 import { NumberField } from './NumberField';
 import { loadMeshFile, loadMeshFromArrayBuffer } from '../mesh/loadMesh';
 import { buildLuminanceBase, composeHeightmap, maskFromAlpha, maskFromThreshold, normalizeDepth, resampleGrid, suggestFloor } from '../relief/heightmap';
+import { estimateBuild } from '../engine/estimate';
+import { pieceCount, useGenerate } from '../hooks/useGenerate';
 import { aiSupported, estimateDepth, removeBackground, webGpuAvailable } from '../relief/ai';
 import { fileToDataUrl, dataUrlToFile, downloadBlob } from '../utils/files';
 import { runPipeline } from '../engine/pipeline';
 import { MeshyProvider } from '../providers/meshy';
 import { decodeRelief, makeProject, parseProject } from '../export/project';
 import { INPUT_PRESETS, LAYER_SOFT_LIMIT, MODE_PRESETS, SHEET_PRESETS, THICKNESS_PRESETS } from '../defaults';
-import { measureOriented } from '../mesh/measure';
 import { clearAutosave, decodeAutosaveRelief, readAutosave, scheduleAutosave, type AutosaveRecord } from '../utils/autosave';
 import type { BuildMode, ProjectSettings, ReliefBase } from '../types';
 
@@ -17,8 +18,9 @@ const MODE_LABEL: Record<BuildMode, string> = { statue: 'Statue', terraced: 'Wal
 const MODE_NOTE: Record<BuildMode, string> = {
   statue: 'Free-standing stack. Slices run across the chosen axis and every layer gets two dowels.',
   terraced: 'Layers lie parallel to the wall like a topo map. Short pins between neighbours, hidden where the next layer covers them.',
-  slabs: 'Horizontal slabs stacked bottom to top with a flat back. Two rods run through a hidden strip along the back edge.'
+  slabs: 'Slabs stand on edge with a flat back. Two rods run through a hidden strip along the back edge.'
 };
+const SLAB_NOTE = { horizontal: 'Horizontal slabs stack bottom to top.', vertical: 'Vertical slabs stack left to right.' } as const;
 
 type SectionId = 'input' | 'build' | 'scale' | 'depth' | 'hollow' | 'pins' | 'sheets' | 'ai';
 const DEFAULT_OPEN: Record<SectionId, boolean> = { input: true, build: true, scale: true, depth: true, hollow: false, pins: false, sheets: false, ai: true };
@@ -56,13 +58,14 @@ export const PRESETS: { id: string; label: string; hint: string; apply: (s: Proj
   }
 ];
 
-export function ControlPanel({ projectName, setProjectName }: { projectName: string; setProjectName: (s:string)=>void }) {
+export function ControlPanel({ projectName, setProjectName, open = false, onClose }: { projectName: string; setProjectName: (s:string)=>void; open?: boolean; onClose?: () => void }) {
   const store = useStore();
   const [openSections, setOpenSections] = useState<Record<SectionId, boolean>>(DEFAULT_OPEN);
   const [restorable, setRestorable] = useState<AutosaveRecord | null>(null);
   const toggle = (id: SectionId) => setOpenSections(o => ({ ...o, [id]: !o[id] }));
   const isOpen = (id: SectionId) => openSections[id];
-  const { settings, patchSettings, sourceAsset, mesh, reliefBase, mask, result, dispatch, unsavedAi } = store;
+  const { settings, patchSettings, sourceAsset, mesh, reliefBase, mask, result, stale, dispatch, unsavedAi } = store;
+  const generate = useGenerate();
   const [apiKey, setApiKey] = useState(() => localStorage.getItem('stackcarve.meshy.apiKey') ?? '');
   const [aiImage, setAiImage] = useState<File | null>(null);
   const projectInput = useRef<HTMLInputElement>(null);
@@ -73,28 +76,14 @@ export function ControlPanel({ projectName, setProjectName }: { projectName: str
   const setMode = (buildMode: BuildMode) => patchSettings({ buildMode, ...MODE_PRESETS[buildMode] });
   const rotate = (patch: Partial<typeof settings.rotationDeg>) => patchSettings({ rotationDeg: { ...settings.rotationDeg, ...patch } });
 
-  const relief = settings.inputMode === 'relief';
-  const mode: BuildMode = relief ? (settings.buildMode === 'slabs' ? 'slabs' : 'terraced') : settings.buildMode;
-  const wallArt = mode !== 'statue';
+  const est = useMemo(() => estimateBuild(settings, mesh, reliefBase), [settings, mesh, reliefBase]);
+  const { relief, mode, wallArt, count, pitch, scaled, keptDepth } = est;
   const t = settings.materialThickness;
   const near = (a: number, b: number) => Math.abs(a - b) < 1e-6;
-  const rotKey = `${settings.rotationDeg.x},${settings.rotationDeg.y},${settings.rotationDeg.z}`;
-  // Size of the model at the requested height, so relief depth can be chosen with the real depth in view.
-  const scaled = useMemo(() => {
-    if (!mesh || relief) return null;
-    const m = measureOriented(mesh.geometry, settings.rotationDeg);
-    if (m.height <= 0) return null;
-    const k = settings.targetHeight / m.height;
-    return { width: m.width * k, depth: m.depth * k * (wallArt ? settings.wallArt.depthScale : 1) };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mesh, rotKey, settings.targetHeight, settings.wallArt.depthScale, wallArt, relief]);
-  const keptDepth = scaled ? (settings.wallArt.reliefDepth > 0 ? Math.min(settings.wallArt.reliefDepth, scaled.depth) : scaled.depth) : settings.wallArt.reliefDepth;
-  const pitch = t + (mode === 'slabs' ? Math.max(0, settings.wallArt.slabGap) : 0);
-  const reliefHeight = reliefBase ? settings.relief.finishedWidth * (reliefBase.height - 1) / Math.max(1, reliefBase.width - 1) : settings.relief.finishedWidth;
-  const stackSpan = mode === 'slabs'
-    ? (relief ? (settings.wallArt.slabDirection === 'horizontal' ? reliefHeight : settings.relief.finishedWidth) : (settings.wallArt.slabDirection === 'horizontal' ? settings.targetHeight : (scaled?.width ?? settings.targetHeight)))
-    : (mode === 'terraced' ? (relief ? settings.relief.depth : keptDepth) : settings.targetHeight);
-  const count = Math.max(1, Math.round((stackSpan + (mode === 'slabs' ? Math.max(0, settings.wallArt.slabGap) : 0)) / pitch));
+  /** Real piece count once generated with the current settings; the estimate otherwise. */
+  const actual = result && !stale ? pieceCount(result) : null;
+  const pieceWord = mode === 'slabs' ? 'slabs' : 'layers';
+  const countLabel = actual != null ? `${actual} ${pieceWord}` : `${est.exact ? '' : 'up to '}${count} ${pieceWord}`;
 
   const loadMesh = async (file: File) => {
     dispatch({type:'busy',label:'Loading mesh',progress:15,status:'Welding vertices and checking topology…'});
@@ -102,6 +91,7 @@ export function ControlPanel({ projectName, setProjectName }: { projectName: str
       const loaded = await loadMeshFile(file);
       dispatch({type:'mesh',mesh:loaded});
       dispatch({type:'source',asset:{kind:'mesh',name:file.name,mimeType:file.type||'application/octet-stream',dataUrl:await fileToDataUrl(file),sizeBytes:file.size},mesh:loaded});
+      dispatch({type:'tab',value:'model'});
       dispatch({type:'busy',label:null,progress:100,status:`Loaded ${file.name}.`});
     } catch(e) { dispatch({type:'busy',label:null,status:e instanceof Error?e.message:String(e)}); }
   };
@@ -113,6 +103,7 @@ export function ControlPanel({ projectName, setProjectName }: { projectName: str
       if (!keepRelief) dispatch({type:'reliefBase',base,mask:null});
       dispatch({type:'source',asset:{kind:'image',name:file.name,mimeType:file.type,dataUrl:await fileToDataUrl(file),sizeBytes:file.size}});
       if (!keepRelief && settings.inputMode==='relief') setRelief({source:'luminance'});
+      dispatch({type:'tab',value:'model'});
       dispatch({type:'busy',label:null,progress:100,status:`Loaded ${file.name}. ${settings.inputMode==='relief'?'Next: Estimate depth, then Cut out subject.':''}`});
     } catch(e) { dispatch({type:'busy',label:null,status:e instanceof Error?e.message:String(e)}); }
   };
@@ -199,29 +190,12 @@ export function ControlPanel({ projectName, setProjectName }: { projectName: str
     { label: 'Photo', done: !!reliefBase },
     { label: 'Depth', done: depthDone },
     { label: 'Cut out', done: !!mask },
-    { label: 'Build', done: !!result }
+    { label: 'Build', done: !!result && !stale }
   ];
   const nextStep = photoSteps.findIndex(s => !s.done);
 
   const thresholdMask = () => { if (reliefBase) dispatch({type:'mask',mask:maskFromThreshold(reliefBase, settings.relief.backgroundThreshold)}); };
   const clearMask = () => dispatch({type:'mask',mask:null});
-
-  const generate = async () => {
-    if (relief && !reliefBase) return dispatch({type:'busy',label:null,status:'Load a photo first (Input section).'});
-    if (!relief && !mesh) return dispatch({type:'busy',label:null,status:'Load a mesh first (Input section).'});
-    if (count > LAYER_SOFT_LIMIT && !window.confirm(`This will generate about ${count} pieces. Continue?`)) return;
-    dispatch({type:'busy',label:'Generating cut geometry',progress:10,status:'Sectioning and rebuilding contours…'});
-    try {
-      const map = relief && reliefBase ? composeHeightmap(reliefBase, { settings: settings.relief, mask, preview: false }) : null;
-      // Let the overlay paint before the heavy synchronous geometry pass.
-      await new Promise(r => setTimeout(r, 30));
-      const output = await runPipeline({settings,mesh,heightmap:map});
-      dispatch({type:'result',result:output});
-      dispatch({type:'tab',value:'slices'});
-      const pieces = output.layers.filter(l => l.parts.some(p => p.role !== 'backer')).length;
-      dispatch({type:'busy',label:null,progress:100,status:`Generated ${pieces} ${output.buildMode === 'slabs' ? 'slabs' : 'layers'} on ${output.sheets.length} sheet${output.sheets.length===1?'':'s'} (${output.stockSheets} × 4×8 stock).`});
-    } catch(e) { dispatch({type:'busy',label:null,status:e instanceof Error?e.message:String(e)}); }
-  };
 
   const generateAi = async () => {
     const file = aiImage ?? (sourceAsset?.kind==='image' && sourceAsset.dataUrl ? dataUrlToFile(sourceAsset.dataUrl,sourceAsset.name) : null);
@@ -244,6 +218,7 @@ export function ControlPanel({ projectName, setProjectName }: { projectName: str
     if (!preset) return;
     const patch = preset.apply(settings);
     patchSettings(patch);
+    if (patch.inputMode && patch.inputMode !== settings.inputMode) dispatch({type:'tab',value:'model'});
     dispatch({type:'busy',label:null,status:`${preset.label} preset applied (${preset.hint}).${patch.inputMode==='mesh'&&settings.inputMode!=='mesh'?' Switched to Mesh input: a statue needs a 3D model.':''}`});
   };
   const loadProject = async (file: File) => {
@@ -255,18 +230,19 @@ export function ControlPanel({ projectName, setProjectName }: { projectName: str
     } catch(e) { dispatch({type:'busy',label:null,status:e instanceof Error?e.message:String(e)}); }
   };
 
-  return <aside className="controls">
+  return <aside className={open ? 'controls open' : 'controls'}>
+    <div className="drawer-head"><b>Settings</b><button type="button" onClick={onClose}>Done</button></div>
     <div className="project-row"><input className="project-name" value={projectName} onChange={e=>setProjectName(e.target.value)} aria-label="Project name"/><button onClick={saveProject}>Save</button><button onClick={()=>projectInput.current?.click()}>Load</button><input ref={projectInput} hidden type="file" accept=".json" onChange={e=>e.target.files?.[0]&&loadProject(e.target.files[0])}/></div>
     {restorable&&!reliefBase&&<div className="banner restore"><span>Found a photo session from {new Date(restorable.savedAt).toLocaleString([], {hour:'numeric',minute:'2-digit',month:'short',day:'numeric'})} with depth{restorable.relief?.mask?' and mask':''}.</span><button onClick={restoreSession}>Restore</button><button className="quiet" onClick={discardSession}>Discard</button></div>}
     {unsavedAi&&<div className="banner"><span>Depth and mask are kept in this browser; save the project to keep them for good.</span><button onClick={saveProject}>Save now</button></div>}
     <div className="presets"><span>Start from</span>{PRESETS.map(p=><button key={p.id} className="chip" title={p.hint} onClick={()=>applyPreset(p.id)}>{p.label}</button>)}</div>
 
-    <Section id="input" title="Input" summary={settings.inputMode==='mesh'?(mesh?.sourceName??'no mesh'):settings.inputMode==='relief'?(sourceAsset?.name??'no photo'):'AI statue'} open={isOpen('input')} toggle={toggle}><div className="segmented">{(['mesh','relief','ai'] as const).map(m=><button className={settings.inputMode===m?'active':''} key={m} onClick={()=>patchSettings({inputMode:m,...(m==='relief'&&settings.inputMode!=='relief'?{...INPUT_PRESETS.relief,buildMode:settings.buildMode==='statue'?'terraced':settings.buildMode}:{})})}>{m==='mesh'?'Mesh':m==='relief'?'Photo':'AI statue'}</button>)}</div>
+    <Section id="input" title="Input" summary={settings.inputMode==='mesh'?(mesh?.sourceName??'no mesh'):settings.inputMode==='relief'?(sourceAsset?.name??'no photo'):'AI statue'} open={isOpen('input')} toggle={toggle}><div className="segmented">{(['mesh','relief','ai'] as const).map(m=><button className={settings.inputMode===m?'active':''} key={m} onClick={()=>{patchSettings({inputMode:m,...(m==='relief'&&settings.inputMode!=='relief'?{...INPUT_PRESETS.relief,buildMode:settings.buildMode==='statue'?'terraced':settings.buildMode}:{})});if(m!==settings.inputMode)dispatch({type:'tab',value:'model'});}}>{m==='mesh'?'Mesh':m==='relief'?'Photo':'AI statue'}</button>)}</div>
       {settings.inputMode==='mesh'&&<><label className="drop"><input type="file" accept=".stl,.obj,.glb" onChange={e=>e.target.files?.[0]&&loadMesh(e.target.files[0])}/><b>Load STL, OBJ, or GLB</b><span>{mesh?.sourceName??'No mesh loaded'}</span></label>
         {!mesh&&<button className="link-btn" onClick={loadSample}>No model handy? Try the sample head</button>}</>}
       {relief&&<><div className="steps">{photoSteps.map((st,i)=><span key={st.label} className={st.done?'done':i===nextStep?'next':''}>{st.done?'✓ ':`${i+1}. `}{st.label}</span>)}</div>
         <label className="drop"><input type="file" accept="image/png,image/jpeg,image/webp" onChange={e=>e.target.files?.[0]&&loadPhoto(e.target.files[0])}/><b>Load a photo</b><span>{sourceAsset?.kind==='image'?sourceAsset.name:'Head-on, filling the frame, plain background'}</span></label>
-        <div className="btn-row"><button className={depthDone?'done':'primary'} disabled={!reliefBase} onClick={runDepth}>{depthDone?'✓ Depth ready (redo)':'1. Estimate depth (AI)'}</button><button className={mask?'done':'primary'} disabled={!reliefBase} onClick={runCutout}>{mask?'✓ Cut out (redo)':'2. Cut out subject (AI)'}</button></div>
+        <div className="btn-row"><button className={depthDone?'done':'primary'} disabled={!reliefBase} onClick={runDepth}>{depthDone?'✓ Depth ready (redo)':'Estimate depth (AI)'}</button><button className={mask?'done':'primary'} disabled={!reliefBase} onClick={runCutout}>{mask?'✓ Cut out (redo)':'Cut out subject (AI)'}</button></div>
         <div className="btn-row"><button disabled={!reliefBase} onClick={thresholdMask}>Mask from threshold</button><button disabled={!mask} onClick={clearMask}>Clear mask</button></div>
         <p className="note">Models download once (roughly 50 to 150 MB total) and run on this computer. Paint the mask in the Photo tab. Cutout tries RMBG-1.4 first (licensed for non-commercial use), then BiRefNet (MIT), then MODNet.</p></>}
       {settings.inputMode==='ai'&&<><label className="drop"><input type="file" accept="image/png,image/jpeg" onChange={e=>{const f=e.target.files?.[0];if(f){setAiImage(f);loadPhoto(f)}}}/><b>Load statue photo</b><span>{aiImage?.name??(sourceAsset?.kind==='image'?sourceAsset.name:'No image loaded')}</span></label><button className="primary full" onClick={generateAi}>Generate GLB with Meshy</button></>}
@@ -276,15 +252,15 @@ export function ControlPanel({ projectName, setProjectName }: { projectName: str
       {relief
         ? <>
           <div className="segmented vertical">{(['terraced','slabs'] as const).map(m=><button className={mode===m?'active':''} key={m} onClick={()=>setMode(m)}>{MODE_LABEL[m]}</button>)}</div>
-          <p className="note">{mode==='terraced'?'Depth is quantised into terraces; layer 1 is the full silhouette against the wall.':'Each slab is the depth profile along one band of the photo, closed at a flat back.'}</p>
+          <p className="note">{mode==='terraced'?'Depth is quantised into terraces; layer 1 is the full silhouette against the wall.':`Each slab is the depth profile along one ${settings.wallArt.slabDirection} band of the photo, closed at a flat back. ${SLAB_NOTE[settings.wallArt.slabDirection]}`}</p>
         </>
         : <>
           <div className="segmented vertical">{(['statue','terraced','slabs'] as const).map(m=><button className={settings.buildMode===m?'active':''} key={m} onClick={()=>setMode(m)}>{MODE_LABEL[m]}</button>)}</div>
-          <p className="note">{MODE_NOTE[settings.buildMode]}</p>
+          <p className="note">{MODE_NOTE[settings.buildMode]}{settings.buildMode==='slabs'?` ${SLAB_NOTE[settings.wallArt.slabDirection]}`:''}</p>
         </>}
     </Section>
 
-    <Section id="scale" title="Scale & layers" summary={`${count} ${mode==='slabs'?'slabs':'layers'} · ${t} in stock`} open={isOpen('scale')} toggle={toggle}>
+    <Section id="scale" title="Scale & layers" summary={`${countLabel} · ${t} in stock`} open={isOpen('scale')} toggle={toggle}>
       {relief&&<NumberField label="Finished width on wall" value={settings.relief.finishedWidth} min={1} onChange={n=>setRelief({finishedWidth:n})}/>}
       {relief&&reliefBase&&<div className="computed"><span>Finished height</span><b>{(settings.relief.finishedWidth*(reliefBase.height-1)/Math.max(1,reliefBase.width-1)).toFixed(1)} in</b></div>}
       {relief
@@ -299,12 +275,13 @@ export function ControlPanel({ projectName, setProjectName }: { projectName: str
       </>}
       <NumberField label="Material thickness (measure it)" value={t} min={.05} step={.001} onChange={n=>patchSettings({materialThickness:n})}/>
       <div className="chips">{THICKNESS_PRESETS.map(p=><button key={p.label} className={near(t,p.value)?'chip active':'chip'} onClick={()=>patchSettings({materialThickness:p.value})}>{p.label}</button>)}</div>
-      <div className={count>LAYER_SOFT_LIMIT?'computed alert':'computed'}><span>{mode==='slabs'?'Slab count (before trimming)':'Layer count'}</span><b>{count}{count>LAYER_SOFT_LIMIT?' (a lot)':''}</b></div>
+      <div className={count>LAYER_SOFT_LIMIT?'computed alert':'computed'}><span>{actual!=null?`${mode==='slabs'?'Slabs':'Layers'} generated`:`${mode==='slabs'?'Slabs':'Layers'} (estimate${est.exact?'':', empty ends are trimmed'})`}</span><b>{actual!=null?actual:`${est.exact?'':'up to '}${count}`}{count>LAYER_SOFT_LIMIT?' (a lot)':''}</b></div>
       {count>LAYER_SOFT_LIMIT&&<p className="note alert">{count} pieces will take a while to cut and glue. Thicker stock, a bigger gap, or less relief depth brings it down.</p>}
       <div className="computed"><span>{mode==='terraced'?'Achieved depth':mode==='slabs'?(settings.wallArt.slabDirection==='horizontal'?'Stack height':'Stack width'):'Achieved height'}</span><b>{(count*pitch-(mode==='slabs'?Math.max(0,settings.wallArt.slabGap):0)).toFixed(3)} in</b></div>
       {mode==='terraced'&&!relief&&<label className="toggle"><input type="checkbox" checked={settings.wallArt.basePlate} onChange={e=>setWall({basePlate:e.target.checked})}/><span>Base plate: back layer becomes the full silhouette</span></label>}
       {mode==='slabs'&&<>
-        <label className="field"><span>Slab direction</span><select value={settings.wallArt.slabDirection} onChange={e=>setWall({slabDirection:e.target.value as 'horizontal'|'vertical'})}><option value="horizontal">Horizontal (stack bottom to top)</option><option value="vertical">Vertical (stack left to right)</option></select></label>
+        <div className="field"><span>Slab direction</span><div className="segmented small" role="group" aria-label="Slab direction">{(['horizontal','vertical'] as const).map(dir=><button key={dir} type="button" className={settings.wallArt.slabDirection===dir?'active':''} onClick={()=>setWall({slabDirection:dir})}>{dir==='horizontal'?'Horizontal':'Vertical'}</button>)}</div></div>
+        <p className="note">{SLAB_NOTE[settings.wallArt.slabDirection]}</p>
         <NumberField label="Gap between slabs (0 = touching)" value={settings.wallArt.slabGap} min={0} step={.0625} onChange={n=>setWall({slabGap:Math.max(0,n)})}/>
         {settings.wallArt.slabGap>0&&<p className="note">Gaps give the line-art look and cut wood use roughly in half. Keep the spacing with printed sleeves or nuts on threaded rod; the Sheets tab lists them.</p>}
         {relief&&<NumberField label="Base depth inside the silhouette" value={settings.relief.baseDepth} min={0} onChange={n=>setRelief({baseDepth:n})}/>}
@@ -352,7 +329,7 @@ export function ControlPanel({ projectName, setProjectName }: { projectName: str
 
     <div className="generate-bar">
       <div className={count>LAYER_SOFT_LIMIT?'generate-summary alert':'generate-summary'}>
-        <b>{count} {mode==='slabs'?'slabs':'layers'}</b>
+        <b>{countLabel}</b>
         <span>{mode==='terraced'?`${(relief?settings.relief.depth:keptDepth).toFixed(2)} in deep`:mode==='slabs'?`${(count*pitch-Math.max(0,settings.wallArt.slabGap)).toFixed(1)} in ${settings.wallArt.slabDirection==='horizontal'?'tall':'wide'}`:`${(count*t).toFixed(2)} in tall`}</span>
         <span>{t} in stock{mode==='slabs'&&settings.wallArt.slabGap>0?` · ${settings.wallArt.slabGap} in gaps`:''}</span>
       </div>
