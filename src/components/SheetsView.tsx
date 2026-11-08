@@ -16,10 +16,12 @@ export function SheetsView({ projectName }: { projectName: string }) {
   const [page, setPage] = useState(0);
   const stageRef = useRef<HTMLDivElement>(null);
   const parts = useMemo(() => result?.layers.flatMap(l => l.parts) ?? [], [result]);
-  if (!result?.sheets.length) return <div className="viewport empty-state"><strong>No sheets yet</strong><span>Generate slices and nesting first.</span></div>;
-  const index = Math.min(page, result.sheets.length - 1);
-  const sheet = result.sheets[index];
-  const view = usePanZoom(stageRef, sheet.width, sheet.height);
+  const sheetCount = result?.sheets.length ?? 0;
+  const index = sheetCount ? Math.min(page, sheetCount - 1) : 0;
+  const sheet = sheetCount ? result!.sheets[index] : null;
+  // Hooks must run on every render, including the empty state below.
+  const view = usePanZoom(stageRef, sheet?.width ?? 48, sheet?.height ?? 48);
+  if (!result || !sheet) return <div className="viewport empty-state"><strong>No sheets yet</strong><span>Generate slices and nesting first.</span></div>;
   const exportSheet = (kind: 'dxf'|'svg') => {
     const text = kind === 'dxf' ? sheetToDxf(sheet, parts, settings) : sheetToSvg(sheet, parts, settings);
     downloadBlob(new Blob([text], { type: kind === 'dxf' ? 'application/dxf' : 'image/svg+xml' }), `${projectName || 'stackcarve'}_sheet_${String(index+1).padStart(2,'0')}.${kind}`);

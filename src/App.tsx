@@ -7,6 +7,7 @@ import { SlicesViewport } from './components/SlicesViewport';
 import { SheetsView } from './components/SheetsView';
 import { WarningsPanel } from './components/WarningsPanel';
 import { cancelAi } from './relief/ai';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
 function Workspace() {
   const { tab, dispatch, busy, progress, status, result, selectedLayer, selectedPartId, settings, unsavedAi } = useStore();
@@ -40,4 +41,4 @@ function Workspace() {
   </div>;
 }
 
-export function App() { return <StoreProvider><Workspace/></StoreProvider>; }
+export function App() { return <ErrorBoundary><StoreProvider><Workspace/></StoreProvider></ErrorBoundary>; }
