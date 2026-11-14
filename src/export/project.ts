@@ -1,5 +1,5 @@
 import type { SourceAsset, StackCarveProject, ProjectSettings, PipelineResult, ReliefBase, StoredRelief } from '../types';
-import { DEFAULT_SETTINGS } from '../defaults';
+import { DEFAULT_SETTINGS, MATERIALS } from '../defaults';
 
 function toBase64(bytes: Uint8Array) {
   let s = '';
@@ -55,12 +55,17 @@ export function mergeSettings(saved: Partial<ProjectSettings> | undefined): Proj
   const relief = { ...DEFAULT_SETTINGS.relief, ...(s.relief ?? {}) } as ProjectSettings['relief'] & { useDepthModel?: boolean };
   delete relief.useDepthModel;
   if (s.relief && !('source' in s.relief)) relief.source = 'luminance'; // older projects were brightness based
+  if (s.relief && !('sizeTo' in s.relief)) relief.sizeTo = 'frame';        // and sized by the whole photo
+  const plan = { ...DEFAULT_SETTINGS.plan, ...(s.plan ?? {}) };
+  if (!(plan.material in MATERIALS)) plan.material = DEFAULT_SETTINGS.plan.material;
   return {
     ...DEFAULT_SETTINGS,
     ...s,
+    inputMode: s.inputMode === 'ai' ? 'mesh' : (s.inputMode ?? DEFAULT_SETTINGS.inputMode), // the Meshy generator now lives inside the 3D model step
     wallArt: { ...DEFAULT_SETTINGS.wallArt, ...(s.wallArt ?? {}) },
     relief,
     ai: { ...DEFAULT_SETTINGS.ai, ...(s.ai ?? {}) },
+    plan,
     rotationDeg: { ...DEFAULT_SETTINGS.rotationDeg, ...(s.rotationDeg ?? {}) }
   };
 }

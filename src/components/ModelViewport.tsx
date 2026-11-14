@@ -3,11 +3,14 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import { useStore } from '../store';
+import { useActions } from '../actions';
+import { EmptyStage } from './EmptyStage';
 
 export function ModelViewport() {
   const host = useRef<HTMLDivElement>(null);
   const modelRef = useRef<THREE.Object3D | null>(null);
   const { mesh, settings, patchSettings } = useStore();
+  const { loadSample } = useActions();
   const wallArt = settings.inputMode !== 'relief' && settings.buildMode !== 'statue';
   const rot = settings.rotationDeg;
 
@@ -89,8 +92,10 @@ export function ModelViewport() {
     model.rotation.set(THREE.MathUtils.degToRad(rot.x), THREE.MathUtils.degToRad(rot.y), THREE.MathUtils.degToRad(rot.z));
   }, [rot.x, rot.y, rot.z]);
 
+  if (!mesh) {
+    return <EmptyStage title="Add your 3D model" extra={<button type="button" className="btn" onClick={loadSample}>Try the sample head</button>}>An STL, OBJ or GLB file. Drop it here or choose one.</EmptyStage>;
+  }
   return <div className="viewport" ref={host}>
-    {!mesh && <div className="empty-state"><strong>Model viewport</strong><span>Load an STL, OBJ, GLB, or generate a mesh from a photo.</span></div>}
-    {mesh && <div className="viewport-hint">{wallArt ? 'This is the view from in front of the wall. Orient the model so it faces you with the top up (orange arrow = up).' : 'Drag the rotation rings to orient the model before slicing.'}</div>}
+    <div className="viewport-hint">{wallArt ? 'You are looking at the wall. Turn the model until it faces you with the top up.' : 'Drag the rings to stand the model the way it will be stacked.'}</div>
   </div>;
 }

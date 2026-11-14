@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from '../store';
-import { composeHeightmap, fillHoles, keepLargestRegion, maskFromThreshold } from '../relief/heightmap';
+import { fillHoles, keepLargestRegion, maskFromThreshold, renderHeightmapPreview } from '../relief/heightmap';
+import { usePlan } from '../plan/PlanContext';
+import { EmptyStage } from './EmptyStage';
 
 type Brush = 'keep' | 'remove';
 const UNDO_LIMIT = 25;
@@ -24,7 +26,9 @@ export function PhotoWorkbench() {
   const [undoDepth, setUndoDepth] = useState(0);
 
   const base = reliefBase;
-  const composed = useMemo(() => base ? composeHeightmap(base, { settings: settings.relief, mask }) : null, [base, mask, settings.relief]);
+  // The depth is composed once for the whole app; this view only paints it.
+  const { composed } = usePlan();
+  const depthUrl = useMemo(() => composed ? renderHeightmapPreview(composed, settings.relief.backgroundThreshold) : '', [composed, settings.relief.backgroundThreshold]);
 
   useEffect(() => {
     if (!sourceAsset?.dataUrl) { photoRef.current = null; return; }
@@ -60,7 +64,7 @@ export function PhotoWorkbench() {
   }, [base, showMask, tick, settings.relief.backgroundThreshold]);
 
   if (!base) {
-    return <div className="viewport empty-state"><strong>Photo workbench</strong><span>Load a photo in the panel, then estimate depth and cut out the subject here.</span></div>;
+    return <EmptyStage title="Add your photo">A head-on shot that fills the frame, on a plain background, works best. Drop a file here or choose one.</EmptyStage>;
   }
 
   const pushUndo = () => {
@@ -117,25 +121,25 @@ export function PhotoWorkbench() {
 
   return <div className="photo-bench">
     <div className="photo-tools">
-      <div className="segmented small"><button className={brush === 'remove' ? 'active' : ''} onClick={() => setBrush('remove')}>Remove</button><button className={brush === 'keep' ? 'active' : ''} onClick={() => setBrush('keep')}>Keep</button></div>
-      <label className="inline"><span>Brush</span><input type="range" min="3" max="80" value={radius} onChange={e => setRadius(Number(e.target.value))}/><b>{radius}px</b></label>
-      <div className="btn-row compact">
-        <button onClick={undo} disabled={!undoDepth} title="Undo the last stroke or cleanup">Undo{undoDepth ? ` (${undoDepth})` : ''}</button>
-        <button onClick={keepLargest} title="Keep only the biggest connected area and drop specks">Keep largest</button>
-        <button onClick={fill} title="Fill background pockets enclosed by the subject">Fill holes</button>
-        <button onClick={invert} title="Swap kept and removed">Invert</button>
+      <div className="segmented" role="group" aria-label="Brush"><button type="button" className={brush === 'remove' ? 'active' : ''} aria-pressed={brush === 'remove'} onClick={() => setBrush('remove')}>Remove</button><button type="button" className={brush === 'keep' ? 'active' : ''} aria-pressed={brush === 'keep'} onClick={() => setBrush('keep')}>Keep</button></div>
+      <label className="inline"><span>Brush size</span><input type="range" min="3" max="80" value={radius} onChange={e => setRadius(Number(e.target.value))}/></label>
+      <div className="tool-buttons">
+        <button type="button" className="btn small" onClick={undo} disabled={!undoDepth} title="Undo the last stroke or cleanup">Undo{undoDepth ? ` (${undoDepth})` : ''}</button>
+        <button type="button" className="btn small" onClick={keepLargest} title="Keep only the biggest connected area and drop specks">Keep largest</button>
+        <button type="button" className="btn small" onClick={fill} title="Fill background pockets enclosed by the subject">Fill holes</button>
+        <button type="button" className="btn small" onClick={invert} title="Swap kept and removed">Invert</button>
       </div>
-      <label className="toggle inline"><input type="checkbox" checked={showMask} onChange={e => setShowMask(e.target.checked)}/><span>Show removed areas</span></label>
-      <span className="muted">{base.source === 'depth' ? 'AI depth' : 'Brightness'} · {base.width} × {base.height} · {stats}</span>
+      <label className="toggle inline"><input type="checkbox" checked={showMask} onChange={e => setShowMask(e.target.checked)}/><span>Show what is left out</span></label>
+      <span className="muted">{stats}</span>
     </div>
-    <div className="photo-panes">
+    <div className="photo-panes" tabIndex={0} aria-label="Photo and depth">
       <figure>
         <canvas ref={canvasRef} onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} onPointerLeave={up} style={{ cursor: 'crosshair', touchAction: 'none' }}/>
-        <figcaption>Photo and mask. Paint red over anything that should not be part of the piece. Keep largest drops specks; Fill holes closes eyes and gaps.</figcaption>
+        <figcaption>Your photo. Paint red over anything that should not be part of the piece.</figcaption>
       </figure>
       <figure>
-        {composed && <img src={composed.previewUrl} alt="Depth that will be cut"/>}
-        <figcaption>Depth to cut: white is closest to you, black is at the wall, blue is removed.</figcaption>
+        {depthUrl && <img src={depthUrl} alt="Depth that will be cut"/>}
+        <figcaption>Depth to cut. White is closest to you, black is at the wall, blue is left out.</figcaption>
       </figure>
     </div>
   </div>;

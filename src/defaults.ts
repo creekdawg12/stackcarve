@@ -1,4 +1,4 @@
-import type { ProjectSettings } from './types';
+import type { MaterialId, ProjectSettings } from './types';
 
 export const DEFAULT_SETTINGS: ProjectSettings = {
   units: 'in',
@@ -49,7 +49,8 @@ export const DEFAULT_SETTINGS: ProjectSettings = {
     finishedWidth: 20,
     depthFloor: 0,
     baseDepth: 1,
-    depth: 2.5
+    depth: 2.5,
+    sizeTo: 'subject'
   },
   ai: {
     provider: 'meshy',
@@ -57,21 +58,20 @@ export const DEFAULT_SETTINGS: ProjectSettings = {
     apiKeyPresent: false,
     modelType: 'standard',
     targetPolycount: 30000
+  },
+  plan: {
+    material: 'mdf',
+    stockOnHand: null,
+    sheetPrice: null
   }
 };
 
-/** Settings that change when the build mode changes, so each mode starts from sensible numbers. */
-export const MODE_PRESETS: Record<ProjectSettings['buildMode'], Partial<ProjectSettings>> = {
-  statue: { targetHeight: 4.5, materialThickness: 0.75, wallThickness: 0.75, overlapMargin: 0.5, partGap: 0.5, minFeature: 0.125 },
-  terraced: { targetHeight: 24, materialThickness: 0.25, wallThickness: 0.75, overlapMargin: 0.375, partGap: 0.3, minFeature: 0.25 },
-  slabs: { targetHeight: 24, materialThickness: 0.25, wallThickness: 0.75, overlapMargin: 0.375, partGap: 0.3, minFeature: 0.25 }
-};
-
-/** Settings that change when the input changes: photos are always wall art, meshes default to a statue. */
-export const INPUT_PRESETS: Record<ProjectSettings['inputMode'], Partial<ProjectSettings>> = {
-  mesh: {},
-  ai: {},
-  relief: { buildMode: 'terraced', materialThickness: 0.25, wallThickness: 0.75, overlapMargin: 0.375, partGap: 0.3, minFeature: 0.25, hollowEnabled: true }
+/** Sheet goods the planner knows, with typical densities in pounds per cubic foot. */
+export const MATERIALS: Record<MaterialId, { label: string; density: number }> = {
+  mdf: { label: 'MDF', density: 46 },
+  birch: { label: 'Baltic birch plywood', density: 42 },
+  plywood: { label: 'Softwood plywood', density: 34 },
+  hardboard: { label: 'Hardboard', density: 60 }
 };
 
 /** Above this many pieces the app asks for confirmation; above the hard cap it refuses. */

@@ -4,54 +4,68 @@ StackCarve is a browser app that turns a 3D model or a photo into CNC cut files 
 
 Live app: https://creekdawg12.github.io/stackcarve/
 
+## How a project runs
+
+The app is four steps across the top. Any step can be opened at any time; the main button at the bottom of the left panel always names the next thing to do.
+
+1. **Plan.** A short brief on the left: what you are making (line-art slabs, face plaque, solid slabs or statue), from a photo or a 3D model, how big on the wall, how far off the wall, stock thickness, sheet size, and optionally how many 4 × 8 sheets you have and what one costs. Beside it is the plan sheet, worked out before anything is loaded or cut:
+   - **Front and side views** to scale, drawn the way the chosen style will cut the piece, plus the piece next to a 5 ft 8 in person.
+   - **Quantities:** pieces, finished size, sheets to cut, 4 × 8 sheets to buy, rods and spacers or pins, weight, and cost if a price is set.
+   - **Compare:** the same build at other thicknesses, gaps or styles, with pieces, sheets and weight. Tap a row to use it.
+   - **Notes:** whether the largest part fits the sheet, whether the job fits the stock on hand (with one-tap fixes such as a size that fits), too many or too few pieces, and when the weight calls for a French cleat.
+
+   The numbers start as a rough estimate for a typical portrait, tighten to an estimate measured off your photo or model once it is loaded, and are replaced by the generated figures (in ink, with the total cut length) after Generate. **Print this plan** gives a one-page sheet for the shop.
+2. **Photo** or **Model.** Load the source. For a photo: estimate depth, cut out the subject, paint the cutout if needed. For a model: turn it the right way up.
+3. **Slices.** Generate, then check the piece in 3D. The panel lists what came out and anything to check before cutting. Hollowing, rods or pins, and part numbers are tucked into folds here.
+4. **Sheets.** The nested sheets, the **Before you cut** checklist, and the cut files.
+
+The last brief is remembered in the browser, so the app reopens on your stock and sizes. **New project** in the menu at the top right clears it.
+
 ## Three ways to build
 
-| Mode | What it makes | Alignment | Where the numbers go |
+| Style | What it makes | Alignment | Where the numbers go |
 |---|---|---|---|
-| **Statue** | Free-standing stack, slices across the axis you pick | Two dowels at every layer interface | Anywhere the next layer covers |
-| **Wall art: terraced** | Layers parallel to the wall, topo-map look. Layer 1 sits on the wall; an optional base plate makes it the full silhouette | Short pins between neighbours, only where the layer two steps up hides the hole | Under the next layer toward the viewer |
-| **Wall art: slabs** | Horizontal slabs stacked bottom to top with a flat back against the wall | Two rods through a hidden strip along the back edge, shared by every slab | In the back strip, under the slab above |
+| **Statue** | Free-standing stack, slices across the axis you pick | Two pins at every layer joint | Anywhere the next layer covers |
+| **Face plaque** (terraced) | Layers parallel to the wall, contour-map look. Layer 1 sits on the wall | Short pins between neighbours, only where the layer two steps up hides the hole | Under the next layer toward the viewer |
+| **Line-art slabs** and **Solid slabs** | Slabs on edge with a flat back against the wall, spaced apart or touching, running up and down or side to side | Two rods through a hidden strip along the back edge, shared by every slab | In the back strip, under the next slab |
 
-Photo input builds terraced or slab wall art from a depth map of the photo (see below).
+A photo builds a plaque or slabs from a depth map (see below). A statue needs a 3D model.
 
-Wall art needs the model oriented face toward you with the top up. The Model tab shows that view, with the grid as the wall and an orange arrow for up. The rotation rings, the typed angles, and the quick buttons (Z-up → Y-up, Turn 180°) all work.
+Wall art from a model needs it oriented face toward you with the top up. The Model step shows that view, with the grid as the wall and an orange arrow for up. The rotation rings, the quick buttons (Stand it up, Turn it around) and the exact angles all work.
 
-### Wall art settings
+### Size
 
-- **Finished height on wall** sets the scale.
-- **Relief depth kept from the front** is how much of the model stays in front of the wall plane. The panel shows the model's depth at the chosen height; a face usually wants the front 40 to 60% of the head. 0 keeps the whole model.
-- **Depth compression** squashes depth toward the front (0.5 = half as deep) for a shallower piece.
-- Slices with nothing in front of the wall plane (the crown and chin on a head) are dropped from the ends and the finished size is reported.
-- **Hidden back zone depth** (slabs) is the strip along the flat back edge reserved for rod holes and numbers. Hollowing never eats it.
-- **Rod hole diameter** (slabs) is what gets routed; 13/32 in suits 3/8 in rod.
-- **Backer plate** (slabs) adds a silhouette plate for hanging hardware; the slabs' flat backs glue to it.
+- **Width** (photo) is the width of the cut-out subject on the wall, not of the photo frame; the height follows. Projects saved before the planner keep their old meaning (frame width) and offer a one-tap switch.
+- **Height of the model** sets the scale for wall art from a model; **Depth off the wall** is how much of the model stays in front of the wall plane (0 keeps it all). A face usually wants the front 40 to 60% of the head.
+- **Flatten the depth** (Model step) squashes depth toward the front for a shallower piece.
+- Slices with nothing in front of the wall plane are dropped from the ends, and the plan reports the finished size of what is left.
 
-### Getting started
+### Slabs
 
-The panel opens with four presets: **Face plaque** (terraced, 1/4 in, 2.5 in deep), **Line-art slabs** (vertical slabs, 1/4 in gap, hollowing off), **Solid slabs** (horizontal, touching, rods) and **Statue** (needs a mesh). Pick one, load a photo or model, press Generate. The bar above the Generate button always shows the piece count, finished size and stock, and turns amber when the count gets large. Sections you rarely touch (hollowing, rods, sheets) are collapsed with a one-line summary; tap the heading to open them.
-
-The Sheets tab ends with a **Before you cut** checklist: stock, CAM layer meanings, rods and spacers, assembly order, label notes. Tick it off there, copy it, or find it in `assembly.txt` inside the ZIP.
+- **Slabs run** up and down (stacked left to right) or side to side (stacked bottom to top).
+- **Gap between slabs** spaces them apart: the piece reads as line art and uses about half the wood. Spacer sleeves on the rods hold the gap (3D print them, or use nuts on threaded rod); the plan, the checklist and `assembly.txt` list the count and length.
+- **Hidden strip at the back** (Slices step) is reserved for rod holes and numbers. Hollowing never eats it.
+- **Rod hole** is what gets routed; 13/32 in suits 3/8 in rod.
+- **Backer plate** adds a silhouette plate for hanging hardware; the slabs' flat backs glue to it.
 
 ### From a photo
 
-Wall art only shows the front surface, so a depth map of the photo is all the 3D the slicer needs. The **Photo** input offers two depth sources and a cutout mask, all computed in the browser:
+Wall art only shows the front surface, so a depth map of the photo is all the 3D the slicer needs. The **Photo** step offers two depth sources and a cutout, all computed in the browser:
 
-1. **Estimate depth (AI)** runs Depth Anything V2 Small (Apache-2.0) through Transformers.js, on the GPU via WebGPU when the browser has it, otherwise on the CPU. It predicts relative depth from a single photo: the nose comes forward, the ears fall back toward the wall.
-2. **Cut out subject (AI)** runs RMBG-1.4 to separate the subject from the background. The resulting mask is the silhouette of the piece. RMBG-1.4 is licensed for non-commercial use; swap the model id in `src/defaults.ts` if that matters to you.
-3. The **Photo tab** shows the photo with the mask painted over it and the depth that will be cut. Paint with the Remove or Keep brush to fix edges or drop the body below a face. **Keep largest** drops specks, **Fill holes** closes eyes and gaps, **Undo** steps back through strokes and cleanups. After the cutout the wall plane is fitted to the back of the subject automatically.
-4. **Depth curve** controls: wall plane (depth floor), black and white points, gamma (below 1 pushes the nose out), blur, and the brightness fallback that needs no download.
+1. **Estimate depth** runs Depth Anything V2 Small (Apache-2.0) through Transformers.js, on the GPU via WebGPU when the browser has it, otherwise on the CPU. It predicts relative depth from a single photo: the nose comes forward, the ears fall back toward the wall.
+2. **Cut out subject** runs RMBG-1.4 to separate the subject from the background. The resulting mask is the silhouette of the piece. RMBG-1.4 is licensed for non-commercial use; swap the model id in `src/defaults.ts` if that matters to you.
+3. The stage shows the photo with the cutout painted over it and the depth that will be cut. Paint with the Remove or Keep brush to fix edges or drop the body below a face. **Keep largest** drops specks, **Fill holes** closes eyes and gaps, **Undo** steps back through strokes and cleanups. After the cutout the wall plane is fitted to the back of the subject automatically.
+4. **Fine-tune the depth** holds the rest: wall plane, black and white points, gamma (below 1 pushes the nose out), smoothing, and the brightness fallback that needs no download.
+
+The main button leads through depth and cutout, with **Generate without it** beside it if you would rather skip them.
 
 Models download from the Hugging Face Hub once (roughly 50 to 150 MB in total) and are cached by the browser; the ONNX runtime comes from jsDelivr. Nothing is uploaded anywhere. Shoot the subject head-on, filling the frame, against a plain background.
 
-Depth and mask are autosaved to the browser (IndexedDB) as you work, so a tab that crashes or reloads offers to restore the session; the project file is still the real save, and a banner reminds you. Each AI model is released from memory as soon as its job is done, and tablets run the cutout at a smaller size, both to stay inside mobile Safari's memory limits. Photo depth is relative, so **Relief depth** sets how far the closest point stands off the wall and **Base depth** sets the minimum depth inside the silhouette, which gives every slab a flat back to glue and drill. Saved projects embed the depth and mask so reopening one does not rerun the models.
+Depth and mask are autosaved to the browser (IndexedDB) as you work, so a tab that crashes or reloads offers to restore the session; the project file is still the real save, and a banner reminds you. Each AI model is released from memory as soon as its job is done, and tablets run the cutout at a smaller size, both to stay inside mobile Safari's memory limits. Photo depth is relative, so **Depth off the wall** sets how far the closest point stands out and **Depth at the edges** (Slices step) sets the minimum depth inside the silhouette, which gives every slab a flat back to glue and drill. Saved projects embed the depth and mask so reopening one does not rerun the models.
 
 ### Previews
 
-Slices: drag to orbit, pinch or scroll to zoom, two fingers or right-drag to pan, tap a piece to select it; + / − / Fit buttons top right. The camera holds while you change the exploded view or select pieces. Sheets: drag to pan, pinch or scroll to zoom, + / − / Fit in the toolbar.
-
-### Slab direction and spacing
-
-Slabs can stack bottom to top (horizontal) or from the viewer's left to right (vertical, the classic profile-stand look). **Gap between slabs** spaces them apart: the piece reads as line art and uses about half the wood. The gap is held by spacer sleeves on the rods (3D print them, or use nuts on threaded rod); the Sheets tab and `assembly.txt` list the count and length per rod. Hollowing is usually turned off for gapped slabs, since the voids show through the gaps.
+Slices: drag to turn, pinch or scroll to zoom, two fingers or right-drag to pan, tap a part to select it; + / − / Fit buttons top right. The camera holds while you pull the stack apart or select parts. Sheets: drag to pan, pinch or scroll to zoom, + / − / Fit over the drawing. Changing a setting keeps the last result on screen, marked out of date, until you regenerate.
 
 ### Keeping only what shows
 
@@ -59,7 +73,7 @@ Hollowing removes the inside of each layer wherever both neighbours also cover i
 
 ### Rods (slabs)
 
-The app picks up to two rod columns that fit the most slabs. A rod hole is only placed where the slab above covers it, so no hole shows on a visible step. A slab that takes one rod is still fully located by the rod plus its flat back edge against a straight board. Slabs that fit no rod (the few at the very top and bottom) are listed for glue-up by eye. The Sheets tab and `assembly.txt` in the ZIP give each rod's position, span and cut length.
+The app picks up to two rod columns that fit the most slabs. A rod hole is only placed where the slab above covers it, so no hole shows on a visible step. A slab that takes one rod is still fully located by the rod plus its flat back edge against a straight board. Slabs that fit no rod (the few at the very top and bottom) are listed for glue-up by eye. The checklist on the Sheets step and `assembly.txt` in the ZIP give each rod's position, span and cut length.
 
 ### Hidden pins (terraced)
 
@@ -73,7 +87,8 @@ Each piece gets an etched label (`17/42`, with A/B suffixes for islands) plus an
 
 - **Mesh input:** STL, OBJ, and GLB through Three.js loaders, with welding, winding fix, and manifold diagnostics.
 - **Photo input:** AI depth (Depth Anything V2 Small) or brightness heightmap, AI cutout (RMBG-1.4) or threshold mask with a brush editor, depth curve (floor, levels, gamma, blur), terrace quantization with marching-squares contours, or slab profiles per band.
-- **AI statue:** pluggable `ImageTo3DProvider` interface with a Meshy implementation. The API key stays in browser `localStorage`.
+- **Planning:** estimates from a front view of the subject (photo depth, a rasterised model, or a built-in sample), checked against the real slicer and nester in the tests; sheet counts are given as a range when the estimate straddles a sheet.
+- **Model from a photo:** pluggable `ImageTo3DProvider` interface with a Meshy implementation, under the Model step. The API key stays in browser `localStorage`.
 - **Slicing:** statue slices along X, Y, or Z; terraced slices parallel to the wall with a back-plane cut and silhouette base; slab slices clipped to a flat back, horizontal or vertical, touching or gapped.
 - **Hollowing:** wall inset, solid caps, neighbour overlap clamping, back-zone protection, minimum-feature filter.
 - **Registration:** dowels with bosses (statue), hidden pins (terraced), shared rods with spacer counts (slabs).
@@ -114,7 +129,7 @@ The static output is written to `dist/`.
 
 StackCarve submits a base64 data URI to Meshy's image-to-3D endpoint, polls the task, downloads the GLB, and passes it through the same local mesh pipeline. The completed GLB is embedded in project JSON.
 
-If direct browser requests are blocked by CORS, deploy this minimal Cloudflare Worker and paste its URL into **AI settings → Proxy URL**. Use a Worker you control; the authorization header passes through it.
+If direct browser requests are blocked by CORS, deploy this minimal Cloudflare Worker and paste its URL into **Model → Make a model from a photo → Proxy address**. Use a Worker you control; the authorization header passes through it.
 
 ```js
 export default {
@@ -165,7 +180,8 @@ Sections are cut with a deterministic triangle-plane sectioner and stitched into
 
 ```text
 src/
-  components/   UI, Three.js model/slice views, sheet view
+  components/   step panels, plan sheet, Three.js model/slice views, sheet view
+  plan/         front field, estimates, notes, compare rows, style preview
   engine/       hollowing, dowels, rods and wall-art geometry, etching, nesting, pipeline
   export/       DXF, SVG, ZIP, project JSON
   geometry/     polygon utilities and clipping adapter

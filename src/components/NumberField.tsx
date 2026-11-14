@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react';
  * Numeric input that lets you type freely ("0.25", ".5", "3/8") and commits on blur or Enter.
  * Committing clamps to min/max. Simple fractions are accepted and converted to decimals.
  */
-export function NumberField({ label, value, onChange, min, max, step = 0.01, suffix = 'in' }: {
-  label: string; value: number; onChange: (n: number) => void; min?: number; max?: number; step?: number; suffix?: string;
+export function NumberField({ label, hint, value, onChange, min, max, step = 0.01, suffix = 'in' }: {
+  label: string; hint?: string; value: number; onChange: (n: number) => void; min?: number; max?: number; step?: number; suffix?: string;
 }) {
   const format = (n: number) => Number.isFinite(n) ? String(Number(n.toFixed(4))) : '';
   const [text, setText] = useState(format(value));
@@ -24,13 +24,13 @@ export function NumberField({ label, value, onChange, min, max, step = 0.01, suf
     if (Math.abs(n - value) > 1e-9) onChange(n);
   };
 
-  return <label className="field number-field">
-    <span>{label}</span>
+  return <label className="row number-field">
+    <div className="row-label"><span>{label}</span>{hint && <small>{hint}</small>}</div>
     <span className="input-wrap"><input type="text" inputMode="decimal" value={text} step={step}
       onFocus={() => setEditing(true)}
       onChange={e => setText(e.target.value)}
       onBlur={commit}
-      onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); if (e.key === 'Escape') { setText(format(value)); setEditing(false); (e.target as HTMLInputElement).blur(); } }}/><small>{suffix}</small></span>
+      onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); if (e.key === 'Escape') { setText(format(value)); setEditing(false); (e.target as HTMLInputElement).blur(); } }}/>{suffix && <small>{suffix}</small>}</span>
   </label>;
 }
 

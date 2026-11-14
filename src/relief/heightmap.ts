@@ -150,23 +150,27 @@ export function composeHeightmap(base: ReliefBase, options: ComposeOptions): Hei
   if (mask) {
     for (let i = 0; i < values.length; i++) values[i] = mask[i] ? Math.max(insideMin, values[i]) : 0;
   }
-  let previewUrl = '';
-  if (options.preview !== false && typeof document !== 'undefined') {
-    const canvas = document.createElement('canvas');
-    canvas.width = width; canvas.height = height;
-    const ctx = canvas.getContext('2d')!;
-    const img = ctx.createImageData(width, height);
-    for (let i = 0; i < values.length; i++) {
-      const inside = mask ? mask[i] !== 0 : values[i] >= settings.backgroundThreshold;
-      const c = Math.round(values[i] * 255);
-      if (inside) { img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = c; }
-      else { img.data[i * 4] = 28; img.data[i * 4 + 1] = 38; img.data[i * 4 + 2] = 52; }
-      img.data[i * 4 + 3] = 255;
-    }
-    ctx.putImageData(img, 0, 0);
-    previewUrl = canvas.toDataURL('image/png');
-  }
+  const previewUrl = options.preview !== false ? renderHeightmapPreview({ width, height, values, mask: mask ?? undefined }, settings.backgroundThreshold) : '';
   return { width, height, values, previewUrl, mask: mask ?? undefined };
+}
+
+/** Greyscale picture of a composed heightmap: white is closest, the background is slate blue. */
+export function renderHeightmapPreview(map: { width: number; height: number; values: ArrayLike<number>; mask?: Uint8Array }, backgroundThreshold: number): string {
+  if (typeof document === 'undefined') return '';
+  const { width, height, values, mask } = map;
+  const canvas = document.createElement('canvas');
+  canvas.width = width; canvas.height = height;
+  const ctx = canvas.getContext('2d')!;
+  const img = ctx.createImageData(width, height);
+  for (let i = 0; i < width * height; i++) {
+    const inside = mask ? mask[i] !== 0 : values[i] >= backgroundThreshold;
+    const c = Math.round(values[i] * 255);
+    if (inside) { img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = c; }
+    else { img.data[i * 4] = 28; img.data[i * 4 + 1] = 38; img.data[i * 4 + 2] = 52; }
+    img.data[i * 4 + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  return canvas.toDataURL('image/png');
 }
 
 /** Legacy one-shot helper: brightness base composed with the current settings and no mask. */

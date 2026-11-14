@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { useStore } from '../store';
+import { EmptyStage } from './EmptyStage';
 import type { Part2D, PipelineResult, Polyline } from '../types';
 
 function toPath(poly: Polyline) {
@@ -190,7 +191,10 @@ export function SlicesViewport() {
     const fit = () => {
       const box = new THREE.Box3().setFromObject(built.group);
       const sphere = box.getBoundingSphere(new THREE.Sphere());
-      const d = Math.max(8, sphere.radius * 2.6);
+      // A tall, narrow view (a phone, an iPad held upright) sees less to the sides; back off until the piece fits.
+      const rect = el.getBoundingClientRect();
+      const aspect = rect.width / Math.max(1, rect.height);
+      const d = Math.max(8, sphere.radius * 2.6 * Math.max(1, 1 / Math.max(0.3, aspect)));
       orbit.target.copy(sphere.center);
       const mode = result.buildMode;
       if (mode === 'statue') camera.position.set(sphere.center.x + d, sphere.center.y - d, sphere.center.z + d * .7);
@@ -250,14 +254,14 @@ export function SlicesViewport() {
     s.orbit.update();
   };
 
-  if (!result) return <div className="viewport empty-state"><strong>No slices yet</strong><span>Generate the project from the Model tab.</span></div>;
+  if (!result) return <EmptyStage title="Nothing sliced yet">Generating cuts the piece into numbered parts and shows them here in 3D.</EmptyStage>;
   return <div className="viewport slices-wrap" ref={host}>
-    <label className="explode"><span>Exploded view</span><input type="range" min="0" max="2" step="0.05" value={explode} onChange={e => setExplode(Number(e.target.value))}/><b>{explode.toFixed(2)}×</b></label>
+    <label className="explode"><span>Pull apart</span><input type="range" min="0" max="2" step="0.05" value={explode} onChange={e => setExplode(Number(e.target.value))}/></label>
     <div className="view-buttons">
-      <button onClick={() => zoom(0.8)} title="Zoom in" aria-label="Zoom in">+</button>
-      <button onClick={() => zoom(1.25)} title="Zoom out" aria-label="Zoom out">−</button>
-      <button onClick={() => scene.current?.fit()} title="Fit the whole piece in view">Fit</button>
+      <button type="button" onClick={() => zoom(0.8)} title="Zoom in" aria-label="Zoom in">+</button>
+      <button type="button" onClick={() => zoom(1.25)} title="Zoom out" aria-label="Zoom out">−</button>
+      <button type="button" onClick={() => scene.current?.fit()} title="Fit the whole piece in view">Fit</button>
     </div>
-    <div className="viewport-hint">{result.buildMode === 'slabs' ? (result.slabDirection === 'vertical' ? 'Slabs stack left to right; rods run through the hidden back strip.' : 'Slabs stack bottom to top; rods run through the hidden back strip.') : result.buildMode === 'terraced' ? 'Layer 1 sits on the wall; terraces step toward you.' : 'Layers stack bottom to top on the dowels.'} Drag to orbit, pinch or scroll to zoom, two fingers or right-drag to pan, tap a piece to select it.</div>
+    <div className="viewport-hint">{result.buildMode === 'slabs' ? (result.slabDirection === 'vertical' ? 'Slabs stack left to right on two hidden rods.' : 'Slabs stack bottom to top on two hidden rods.') : result.buildMode === 'terraced' ? 'Layer 1 sits on the wall and the rest step toward you.' : 'Layers stack bottom to top on the dowels.'} Drag to turn, pinch to zoom, tap a part to select it.</div>
   </div>;
 }

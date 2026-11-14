@@ -8,7 +8,8 @@ export type InputMode = 'mesh' | 'relief' | 'ai';
  * slabs    - wall art, horizontal slabs stacked bottom to top, rods through a hidden back zone
  */
 export type BuildMode = 'statue' | 'terraced' | 'slabs';
-export type AppTab = 'model' | 'slices' | 'sheets';
+/** The four steps of a project, in order. */
+export type AppStep = 'plan' | 'source' | 'slices' | 'sheets';
 export type Point2 = { x: number; y: number };
 export type Polyline = Point2[];
 
@@ -41,6 +42,11 @@ export interface ReliefSettings {
   baseDepth: number;
   /** How far the closest point of the photo stands off the wall, in inches. */
   depth: number;
+  /**
+   * What finishedWidth measures: the cut-out subject (what ends up on the wall) or the whole
+   * photo frame (how projects were sized before the planner existed).
+   */
+  sizeTo: 'subject' | 'frame';
 }
 
 /** Raw normalised photo depth before the curve, 1 = closest to the viewer. */
@@ -57,6 +63,17 @@ export interface AiSettings {
   apiKeyPresent: boolean;
   modelType: 'standard' | 'lowpoly';
   targetPolycount: number;
+}
+
+export type MaterialId = 'mdf' | 'birch' | 'plywood' | 'hardboard';
+
+/** Planning inputs that do not change the cut geometry: what the stock is and how much is on hand. */
+export interface PlanSettings {
+  material: MaterialId;
+  /** 4 × 8 ft sheets on hand. Null means no limit. */
+  stockOnHand: number | null;
+  /** Price of one 4 × 8 ft sheet. Null leaves cost out of the plan. */
+  sheetPrice: number | null;
 }
 
 export interface WallArtSettings {
@@ -109,6 +126,7 @@ export interface ProjectSettings {
   nestInCutouts: boolean;
   relief: ReliefSettings;
   ai: AiSettings;
+  plan: PlanSettings;
 }
 
 export interface MeshDiagnostics {

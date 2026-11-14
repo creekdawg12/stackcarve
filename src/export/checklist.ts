@@ -1,4 +1,5 @@
 import type { PipelineResult, ProjectSettings } from '../types';
+import { actualPlan } from '../plan/plan';
 
 export interface ChecklistItem {
   /** Short group heading. */
@@ -18,7 +19,9 @@ export function buildChecklist(result: PipelineResult, settings: ProjectSettings
 
   items.push({ group: 'Stock', text: `${slices.length} ${pieceWord}${backers ? ` plus ${backers} backer plate${backers === 1 ? '' : 's'}` : ''} from ${t} in stock. Measure the sheet with calipers and make sure ${t} in matches, then recut if not.` });
   items.push({ group: 'Stock', text: `${result.sheets.length} sheet${result.sheets.length === 1 ? '' : 's'} of ${settings.sheetWidth} × ${settings.sheetHeight} in, which is ${result.stockSheets} four-by-eight sheet${result.stockSheets === 1 ? '' : 's'}.` });
-  items.push({ group: 'Stock', text: `Finished size: ${result.buildMode === 'terraced' ? `${result.achievedDepth.toFixed(2)} in off the wall` : `${result.achievedHeight.toFixed(1)} in tall, ${result.achievedDepth.toFixed(2)} in deep`}.` });
+  const size = actualPlan(result, settings).size;
+  const one = (n: number) => String(Number(n.toFixed(1)));
+  items.push({ group: 'Stock', text: `Finished size: ${one(size.width)} in wide, ${one(size.height)} in tall, ${result.buildMode === 'statue' ? `${one(size.depth)} in deep` : `${Number(size.depth.toFixed(2))} in off the wall`}.` });
 
   items.push({ group: 'CAM', text: 'DXF layers: OUTER_CUT (red) outside profile; INNER_CUT (blue) voids, cut these before the outer profile; DOWEL (green) holes, drill or bore to the drawn diameter; ETCH (purple) single-line engraving, V-bit or small end mill, shallow.' });
   items.push({ group: 'CAM', text: 'Geometry is nominal. Apply cutter compensation in CAM; nothing is pre-offset.' });

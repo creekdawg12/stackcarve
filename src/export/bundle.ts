@@ -5,6 +5,7 @@ import { sheetToSvg } from './svg';
 import { makeProject } from './project';
 import { downloadBlob } from '../utils/files';
 import { buildChecklist, checklistText } from './checklist';
+import { actualPlan } from '../plan/plan';
 
 export async function exportAll(name: string, result: PipelineResult, settings: ProjectSettings, sourceAsset: SourceAsset | null) {
   const safe = name.trim().replace(/[^a-z0-9_-]+/gi, '_') || 'stackcarve';
@@ -17,12 +18,14 @@ export async function exportAll(name: string, result: PipelineResult, settings: 
   });
   zip.file(`${safe}.stackcarve.json`, JSON.stringify(makeProject(name, settings, sourceAsset, result), null, 2));
   const pieces = result.layers.filter(l => l.parts.some(p => p.role !== 'backer')).length;
+  const plan = actualPlan(result, settings);
   const notes = [
-    `StackCarve assembly notes — ${name}`,
+    `StackCarve assembly notes: ${name}`,
     `Mode: ${result.buildMode}`,
     `Pieces: ${pieces} ${result.buildMode === 'slabs' ? 'slabs' : 'layers'} of ${settings.materialThickness} in stock`,
-    `Finished height: ${result.achievedHeight.toFixed(3)} in, depth off the wall: ${result.achievedDepth.toFixed(3)} in`,
+    `Finished size: ${plan.size.width.toFixed(2)} in wide, ${plan.size.height.toFixed(2)} in tall, ${plan.size.depth.toFixed(2)} in ${result.buildMode === 'statue' ? 'deep' : 'off the wall'}`,
     `Sheets: ${result.sheets.length} × ${settings.sheetWidth} × ${settings.sheetHeight} in (${result.stockSheets} four-by-eight stock sheets)`,
+    `Weight: about ${plan.weightLb.toFixed(1)} lb. Cut line: ${((plan.cutLength ?? 0) / 12).toFixed(0)} ft per pass.`,
     ''
   ];
   if (result.buildMode === 'slabs') {

@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
+import { BRIEF_KEY } from '../store';
 
 type Props = { children: ReactNode };
 type State = { error: Error | null; copied: boolean };
@@ -22,16 +23,23 @@ export class ErrorBoundary extends Component<Props, State> {
     try { await navigator.clipboard.writeText(text); this.setState({ copied: true }); } catch { /* clipboard unavailable */ }
   };
 
+  /** If a remembered setting is what broke the app, reloading alone would break it again. */
+  private startFresh = () => {
+    try { localStorage.removeItem(BRIEF_KEY); } catch { /* storage unavailable */ }
+    location.reload();
+  };
+
   render() {
     const { error } = this.state;
     if (!error) return this.props.children;
     return <div className="crash-screen" role="alert">
       <div className="crash-card">
         <b>Something went wrong</b>
-        <p>StackCarve hit an error it could not recover from. Your photo session is autosaved, so reloading should bring your work back.</p>
+        <p>StackCarve hit an error it could not recover from. Your photo session is autosaved, so reloading should bring your work back. If it happens again, start from the default settings.</p>
         <code>{error.message || String(error)}</code>
         <div className="crash-actions">
           <button className="primary" onClick={() => location.reload()}>Reload app</button>
+          <button onClick={this.startFresh}>Reload with default settings</button>
           <button onClick={this.copy}>{this.state.copied ? 'Copied' : 'Copy error details'}</button>
         </div>
       </div>
