@@ -385,7 +385,7 @@ ol, ul { padding: 0; list-style: none; }
   .tiles-wrap { align-content: start; }
   .detail-col { padding-left: 2px; }
   /* The tiles are right alongside, so stepping through from the details is not needed. */
-  .inspector-step { display: none; }
+  .design-body .inspector-step { display: none; }
 }
 
 .tiles-wrap { min-width: 0; display: grid; gap: 10px; }
