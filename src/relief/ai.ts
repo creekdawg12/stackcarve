@@ -45,7 +45,7 @@ type RequestBody = AiRequest extends infer R ? (R extends { id: string } ? Omit<
 const SLOW_AFTER_MS = 15000;
 const GIVE_UP_AFTER_MS = 90000;
 
-function request<T extends AiResponse['kind']>(req: RequestBody, want: T, onProgress?: ProgressFn): Promise<Extract<AiResponse, { kind: T }>> {
+function request<T extends AiResponse['kind']>(req: RequestBody, want: T, onProgress?: ProgressFn, keepWorker = false): Promise<Extract<AiResponse, { kind: T }>> {
   const id = `ai-${++seq}`;
   const w = getWorker();
   return new Promise((resolve, reject) => {
@@ -55,16 +55,17 @@ function request<T extends AiResponse['kind']>(req: RequestBody, want: T, onProg
     // Models stay resident in GPU and wasm memory while the worker lives. Tablets run out of
     // memory with two of them loaded, so the worker is dropped after every job; the browser's
     // cache keeps the downloaded files, so the next run only pays a few seconds of setup.
-    const finish = () => {
+    // A run of the same job (depth for several pictures) keeps it between items and drops it at the end.
+    const finish = (keep: boolean) => {
       settled = true;
       clearInterval(watchdog);
       pending.delete(id);
       w.removeEventListener('message', onMessage);
       w.removeEventListener('error', onError);
       w.removeEventListener('messageerror', onError as EventListener);
-      resetAi();
+      if (!keep) resetAi();
     };
-    const fail = (err: Error) => { if (settled) return; finish(); reject(err); };
+    const fail = (err: Error) => { if (settled) return; finish(false); reject(err); };
     pending.set(id, fail);
     const onMessage = (e: MessageEvent<AiResponse>) => {
       const msg = e.data;
@@ -76,7 +77,7 @@ function request<T extends AiResponse['kind']>(req: RequestBody, want: T, onProg
         return;
       }
       if (msg.kind === 'progress') { onProgress?.(msg.progress, msg.status); return; }
-      finish();
+      finish(keepWorker && msg.kind === want);
       if (msg.kind === 'error') reject(new Error(msg.message));
       else if (msg.kind === want) resolve(msg as Extract<AiResponse, { kind: T }>);
       else reject(new Error(`Unexpected worker reply ${msg.kind}`));
@@ -101,9 +102,12 @@ function request<T extends AiResponse['kind']>(req: RequestBody, want: T, onProg
   });
 }
 
-/** Relative depth of a photo at the model's working resolution; larger = closer. Not yet normalised. */
-export function estimateDepth(blob: Blob, onProgress?: ProgressFn) {
-  return request({ kind: 'depth', blob, model: AI_MODELS.depth, preferCpu: false }, 'depth', onProgress);
+/**
+ * Relative depth of a photo at the model's working resolution; larger = closer. Not yet normalised.
+ * keepWorker leaves the model loaded for the next picture; call resetAi() after the last one.
+ */
+export function estimateDepth(blob: Blob, onProgress?: ProgressFn, options: { keepWorker?: boolean } = {}) {
+  return request({ kind: 'depth', blob, model: AI_MODELS.depth, preferCpu: false }, 'depth', onProgress, options.keepWorker);
 }
 
 /** Alpha matte of the photo's subject (0 = background) at the photo's native size. */
@@ -126,4 +130,13 @@ export function aiSupported() {
 
 export function webGpuAvailable() {
   return typeof navigator !== 'undefined' && 'gpu' in navigator;
+}
+
+const MODEL_HELP = ' The model downloads from huggingface.co and cdn.jsdelivr.net on first use; check the connection and try again.';
+
+/** One line for the status bar when a model run does not finish, with the likely cause. */
+export function aiFailure(what: string, e: unknown) {
+  const m = e instanceof Error ? e.message : String(e);
+  if (m === 'Cancelled') return `${what} cancelled.`;
+  return `${what} failed: ${m}${/[.!]$/.test(m) ? '' : '.'}${/Reload|shop PC|out of date/.test(m) ? '' : MODEL_HELP}`;
 }

@@ -32,10 +32,11 @@ export const MeshyProvider: ImageTo3DProvider = {
       },
       body: JSON.stringify({
         image_url: imageUrl,
-        model_type: options.modelType,
+        // Meshy retired its low-poly type on 30 Oct 2026; older projects that asked for it get the standard mesh.
+        model_type: 'standard',
         ai_model: 'latest',
         should_texture: false,
-        should_remesh: options.modelType === 'standard',
+        should_remesh: true,
         target_polycount: options.targetPolycount,
         target_formats: ['glb']
       }),

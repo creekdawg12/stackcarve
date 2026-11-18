@@ -3,50 +3,88 @@ import { useStore } from '../../store';
 import { useActions } from '../../actions';
 import { suggestFloor } from '../../relief/heightmap';
 import { effectiveMode } from '../../plan/plan';
+import { useDesign } from '../../design/DesignContext';
+import { useJudgement } from '../../design/useJudgement';
+import { FAIR, GOOD, VERDICT_LABEL } from '../../design/score';
+import { IdeaBlock } from '../DesignStage';
 import { NumberField } from '../NumberField';
-import { Disclosure, Row, Segmented } from '../ui';
+import { Disclosure, Row, Segmented, useNarrow } from '../ui';
 
 function Check() {
   return <svg className="tick" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 8.5 6.6 11.5 12.5 4.8" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>;
 }
 
+/** Verdict and meters for the picture in use, so the bench view carries the same judgement as its tile. */
+function CarveCard() {
+  const { pictures, activeId, setView, select } = useDesign();
+  const picture = pictures.find(p => p.id === activeId) ?? null;
+  const judgement = useJudgement(picture);
+  if (!picture || !judgement) return null;
+  const { scores } = judgement;
+  const level = (v: number) => v >= GOOD ? 'good' : v >= FAIR ? 'fair' : 'poor';
+  return <button type="button" className="carve-card" onClick={() => { select(picture.id); setView('pictures'); }} title="See how this picture carves">
+    <span className={`verdict ${scores.verdict}`}>{VERDICT_LABEL[scores.verdict]}</span>
+    <span className={`carve-score ${level(scores.detail)}`}>Detail kept <b>{scores.detail}</b></span>
+    <span className={`carve-score ${level(scores.sturdy)}`}>Sturdy <b>{scores.sturdy}</b></span>
+  </button>;
+}
+
 function PhotoSource() {
   const { settings, sourceAsset, reliefBase, mask, dispatch } = useStore();
-  const { runDepth, runCutout, thresholdMask, clearMask } = useActions();
+  const { runDepth, runCutout, thresholdMask, clearMask, pickPhoto } = useActions();
+  const design = useDesign();
+  const narrow = useNarrow();
   const r = settings.relief;
   const setRelief = (value: Partial<typeof r>) => dispatch({ type: 'relief', value });
   const loaded = !!reliefBase;
   const depthDone = reliefBase?.source === 'depth';
+  const waiting = design.waiting.length;
+  const active = design.pictures.find(p => p.id === design.activeId) ?? null;
 
   return <div className="step-panel">
+    {!narrow && <section className="group">
+      <h2>What should it be?</h2>
+      <IdeaBlock/>
+    </section>}
+
     <section className="group">
-      <h2>Your photo</h2>
-      <label className="drop" htmlFor="photo-file">
-        <b>{loaded ? 'Replace the photo' : 'Choose a photo'}</b>
-        <span>{sourceAsset?.kind === 'image' ? sourceAsset.name : 'Head-on, filling the frame, plain background'}</span>
-      </label>
-      <ol className="todo">
-        <li className={depthDone ? 'done' : ''}>
-          <div><b>{depthDone && <Check/>}Depth</b><small>{depthDone ? 'Estimated from the photo' : loaded ? 'Brightness is standing in for depth' : 'How far each part stands out'}</small></div>
-          <button type="button" className={depthDone ? 'btn' : 'btn strong'} disabled={!loaded} onClick={runDepth}>{depthDone ? 'Redo' : 'Estimate depth'}</button>
-        </li>
-        <li className={mask ? 'done' : ''}>
-          <div><b>{mask && <Check/>}Cutout</b><small>{mask ? 'Background removed' : loaded ? 'The whole photo is the piece' : 'Which part of the photo is the piece'}</small></div>
-          <button type="button" className={mask ? 'btn' : 'btn strong'} disabled={!loaded} onClick={runCutout}>{mask ? 'Redo' : 'Cut out subject'}</button>
-        </li>
-      </ol>
-      {loaded && <p className="hint">Paint on the photo to fix the cutout. Red areas are left out of the piece.</p>}
+      <div className="group-head"><h2>Pictures</h2>{design.pictures.length > 0 && <span className="count">{design.pictures.length} in the tray</span>}</div>
+      <div className="btn-row">
+        <button type="button" className="btn" onClick={() => { void design.paste(); }}>Paste</button>
+        <button type="button" className="btn" onClick={pickPhoto}>Choose photos</button>
+      </div>
+      <p className="hint">{waiting > 0
+        ? `${waiting} waiting to be judged. Judging estimates depth on this device and shows each one as cut.`
+        : 'Paste, drop or choose. A sheet of several designs comes apart into one picture each.'}</p>
+      {design.pictures.length > (active ? 1 : 0) && <button type="button" className="link" onClick={design.removeOthers}>{active ? 'Remove all but the one in use' : 'Remove all'}</button>}
     </section>
 
-    <Disclosure title="Cut out by hand" summary={mask ? 'cutout in place' : 'no cutout'}>
-      <p className="hint">Start from brightness, then paint the rest on the photo.</p>
+    {loaded && <section className="group">
+      <h2>The picture in use</h2>
+      <p className="in-use">{active?.name ?? (sourceAsset?.kind === 'image' ? sourceAsset.name : 'Photo')}</p>
+      <CarveCard/>
+      <ol className="todo">
+        <li className={depthDone ? 'done' : ''}>
+          <div><b>{depthDone && <Check/>}Depth</b><small>{depthDone ? 'Estimated from the picture' : 'Brightness is standing in for depth'}</small></div>
+          <button type="button" className={depthDone ? 'btn' : 'btn strong'} onClick={runDepth}>{depthDone ? 'Redo' : 'Estimate depth'}</button>
+        </li>
+        <li className={mask ? 'done' : ''}>
+          <div><b>{mask && <Check/>}Cutout</b><small>{mask ? (active?.maskFrom === 'plain' ? 'Plain background cut away' : active?.maskFrom === 'transparent' ? 'Taken from the transparent background' : 'Background removed') : 'The whole picture is the piece'}</small></div>
+          <button type="button" className={mask ? 'btn' : 'btn strong'} onClick={runCutout}>{mask ? 'Redo' : 'Cut out subject'}</button>
+        </li>
+      </ol>
+      <p className="hint">Under Fine-tune, paint on the picture to fix the cutout. Red areas are left out of the piece.</p>
+    </section>}
+
+    {loaded && <Disclosure title="Cut out by hand" summary={mask ? 'cutout in place' : 'no cutout'}>
+      <p className="hint">Start from brightness, then paint the rest on the picture.</p>
       <div className="btn-row">
-        <button type="button" className="btn" disabled={!loaded} onClick={thresholdMask}>Start from brightness</button>
+        <button type="button" className="btn" onClick={() => { thresholdMask(); design.setView('tune'); }}>Start from brightness</button>
         <button type="button" className="btn" disabled={!mask} onClick={clearMask}>Clear the cutout</button>
       </div>
-    </Disclosure>
+    </Disclosure>}
 
-    <Disclosure title="Fine-tune the depth" summary={`${r.source === 'depth' ? 'AI depth' : 'brightness'}, wall plane ${r.depthFloor.toFixed(2)}`}>
+    {loaded && <Disclosure title="Fine-tune the depth" summary={`${r.source === 'depth' ? 'AI depth' : 'brightness'}, wall plane ${r.depthFloor.toFixed(2)}`}>
       <Row label="Depth from">
         <Segmented label="Depth from" value={r.source} onChange={v => setRelief({ source: v })}
           options={[{ value: 'luminance', label: 'Brightness' }, { value: 'depth', label: 'AI depth', disabled: reliefBase?.source !== 'depth', title: reliefBase?.source !== 'depth' ? 'Estimate depth first' : undefined }]}/>
@@ -64,10 +102,10 @@ function PhotoSource() {
       <NumberField label="Smoothing" value={r.blurPx} min={0} max={20} step={0.1} suffix="px" onChange={n => setRelief({ blurPx: n })}/>
       {!mask && <NumberField label="Background below" hint="used when there is no cutout" value={r.backgroundThreshold} min={0} max={1} step={0.01} suffix="" onChange={n => setRelief({ backgroundThreshold: n })}/>}
       <NumberField label="Drop specks under" value={r.minIslandArea} min={0} step={0.01} suffix="in²" onChange={n => setRelief({ minIslandArea: n })}/>
-    </Disclosure>
+    </Disclosure>}
 
     <Disclosure title="About the AI tools">
-      <p className="hint">Depth and cutout run on this device; the photo is not uploaded. The models download once, roughly 50 to 150 MB in total. Cutout tries RMBG-1.4 first (licensed for non-commercial use), then BiRefNet (MIT), then MODNet.</p>
+      <p className="hint">ChatGPT draws the pictures in its own app, on your plan; StackCarve only writes the prompt and reads what you paste back. Depth and cutout run on this device and nothing is uploaded. Their models download once, roughly 50 to 150 MB in total. Cutout tries RMBG-1.4 first (licensed for non-commercial use), then BiRefNet (MIT), then MODNet.</p>
     </Disclosure>
   </div>;
 }
@@ -125,7 +163,6 @@ function ModelSource() {
       </label>
       <Row label="Meshy API key"><input type="password" aria-label="Meshy API key" value={apiKey} placeholder="Kept in this browser" onChange={e => setApiKey(e.target.value)}/></Row>
       <Row label="Proxy address" hint="optional"><input aria-label="Proxy address" value={settings.ai.proxyUrl} placeholder="https://…" onChange={e => setAi({ proxyUrl: e.target.value })}/></Row>
-      <Row label="Mesh type"><select aria-label="Mesh type" value={settings.ai.modelType} onChange={e => setAi({ modelType: e.target.value as 'standard' | 'lowpoly' })}><option value="standard">Standard</option><option value="lowpoly">Low poly</option></select></Row>
       <NumberField label="Target triangles" value={settings.ai.targetPolycount} min={1000} step={1000} suffix="" onChange={n => setAi({ targetPolycount: Math.round(n) })}/>
       <button type="button" className="btn strong wide" onClick={() => generateWithMeshy(aiImage, apiKey)}>Make the model</button>
     </Disclosure>

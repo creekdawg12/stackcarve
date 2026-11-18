@@ -52,6 +52,9 @@ export async function readAutosave(): Promise<AutosaveRecord | null> {
 }
 
 export async function clearAutosave() {
+  // A write still waiting would bring back the very session being cleared.
+  if (timer) { clearTimeout(timer); timer = null; }
+  pending = null;
   try { await tx('readwrite', store => store.delete(KEY)); } catch { /* best effort */ }
 }
 
@@ -60,8 +63,18 @@ export function decodeAutosaveRelief(record: AutosaveRecord) {
 }
 
 let timer: ReturnType<typeof setTimeout> | null = null;
+let pending: Parameters<typeof writeAutosave>[0] | null = null;
 /** Coalesce rapid changes (brush strokes, slider drags) into one write. */
 export function scheduleAutosave(input: Parameters<typeof writeAutosave>[0], delayMs = 1500) {
+  pending = input;
   if (timer) clearTimeout(timer);
-  timer = setTimeout(() => { timer = null; void writeAutosave(input); }, delayMs);
+  timer = setTimeout(flushAutosave, delayMs);
+}
+
+/** Write whatever is waiting, now. For when the page is hidden: a tab in the background may be dropped before its timer runs. */
+export function flushAutosave() {
+  if (timer) { clearTimeout(timer); timer = null; }
+  const input = pending;
+  pending = null;
+  if (input) void writeAutosave(input);
 }

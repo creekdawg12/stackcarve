@@ -1,8 +1,9 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useStore } from './store';
+import { useDesign } from './design/DesignContext';
 import { loadMeshFile, loadMeshFromArrayBuffer } from './mesh/loadMesh';
 import { buildLuminanceBase, maskFromAlpha, maskFromThreshold, normalizeDepth, resampleGrid, suggestFloor } from './relief/heightmap';
-import { aiSupported, estimateDepth, removeBackground, webGpuAvailable } from './relief/ai';
+import { aiFailure as failure, aiSupported, estimateDepth, removeBackground, webGpuAvailable } from './relief/ai';
 import { dataUrlToFile, downloadBlob, fileToDataUrl } from './utils/files';
 import { buildResult, nominalCount, sourceReady } from './engine/generate';
 import { MeshyProvider } from './providers/meshy';
@@ -10,7 +11,7 @@ import { decodeRelief, makeProject, mergeSettings, parseProject } from './export
 import { exportAll } from './export/bundle';
 import { LAYER_SOFT_LIMIT } from './defaults';
 import { STYLES, type StyleId } from './presets';
-import { clearAutosave, decodeAutosaveRelief, readAutosave, scheduleAutosave, type AutosaveRecord } from './utils/autosave';
+import { clearAutosave, decodeAutosaveRelief, readAutosave, flushAutosave, scheduleAutosave, type AutosaveRecord } from './utils/autosave';
 import type { ReliefBase } from './types';
 
 export type GenerateOutcome = 'done' | 'needs-input' | 'cancelled' | 'failed';
@@ -30,6 +31,8 @@ export interface Actions {
   loadSample: () => Promise<void>;
   /** Route a dropped file to the right loader by its type. */
   loadAny: (file: File) => Promise<void>;
+  /** Everything a drop carried: pictures go to the tray together, a model or project file is opened. */
+  loadDropped: (data: DataTransfer | null) => void;
   runDepth: () => Promise<void>;
   runCutout: () => Promise<void>;
   thresholdMask: () => void;
@@ -49,15 +52,10 @@ export interface Actions {
 
 const Ctx = createContext<Actions | null>(null);
 
-const MODEL_HELP = ' The model downloads from huggingface.co and cdn.jsdelivr.net on first use; check the connection and try again.';
-const failure = (what: string, e: unknown) => {
-  const m = e instanceof Error ? e.message : String(e);
-  if (m === 'Cancelled') return `${what} cancelled.`;
-  return `${what} failed: ${m}${/[.!]$/.test(m) ? '' : '.'}${/Reload|shop PC|out of date/.test(m) ? '' : MODEL_HELP}`;
-};
 
 export function ActionsProvider({ children }: { children: React.ReactNode }) {
   const { settings, patchSettings, sourceAsset, mesh, reliefBase, mask, result, projectName, unsavedAi, dispatch } = useStore();
+  const { addImages, clear: clearTray, forget: forgetPicture } = useDesign();
   const [restorable, setRestorable] = useState<AutosaveRecord | null>(null);
   const photoInput = useRef<HTMLInputElement>(null);
   const meshInput = useRef<HTMLInputElement>(null);
@@ -171,6 +169,8 @@ export function ActionsProvider({ children }: { children: React.ReactNode }) {
   const loadProject = useCallback(async (file: File) => {
     try {
       const project = parseProject(await file.text());
+      // Another project is another piece: the pictures and idea on the bench belong to the last one.
+      clearTray(true);
       dispatch({ type: 'project', project });
       const stored = decodeRelief(project.relief);
       if (project.sourceAsset?.dataUrl) {
@@ -182,14 +182,15 @@ export function ActionsProvider({ children }: { children: React.ReactNode }) {
       dispatch({ type: 'step', value: 'plan' });
       say(`Opened ${project.name}. Check the plan, then generate.`);
     } catch (e) { say(e instanceof Error ? e.message : String(e)); }
-  }, [dispatch, loadMesh, loadPhoto, say]);
+  }, [clearTray, dispatch, loadMesh, loadPhoto, say]);
 
   const newProject = useCallback(() => {
     if ((unsavedAi || result) && !window.confirm('Start a new project? Anything not saved is lost.')) return;
     void clearAutosave();
     setRestorable(null);
+    clearTray(true);
     dispatch({ type: 'reset' });
-  }, [dispatch, result, unsavedAi]);
+  }, [clearTray, dispatch, result, unsavedAi]);
 
   const exportZip = useCallback(() => { if (result) void exportAll(projectName, result, settings, sourceAsset); }, [projectName, result, settings, sourceAsset]);
 
@@ -210,10 +211,25 @@ export function ActionsProvider({ children }: { children: React.ReactNode }) {
     if (/\.json$/.test(name)) return loadProject(file);
     if (file.type.startsWith('image/') || /\.(png|jpe?g|webp)$/.test(name)) {
       if (settings.inputMode !== 'relief') setSource('photo');
-      return loadPhoto(file);
+      return addImages([file]);
     }
     say(`${file.name} is not a photo, a 3D model or a StackCarve project.`);
-  }, [loadMesh, loadPhoto, loadProject, patchSettings, say, setSource, settings.inputMode]);
+  }, [addImages, loadMesh, loadProject, patchSettings, say, setSource, settings.inputMode]);
+
+  const loadDropped = useCallback((data: DataTransfer | null) => {
+    const files = Array.from(data?.files ?? []);
+    if (!files.length) {
+      // Dragged straight out of another web page, a picture can arrive as nothing but its address.
+      if (data?.types.includes('text/uri-list')) say('That picture came across as a link. Copy the image and paste it here instead.');
+      return;
+    }
+    const isImage = (f: File) => f.type.startsWith('image/') || /\.(png|jpe?g|webp)$/i.test(f.name);
+    const images = files.filter(isImage);
+    const other = files.find(f => !isImage(f));
+    if (other) { void loadAny(other); return; }
+    if (settings.inputMode !== 'relief') setSource('photo');
+    void addImages(images);
+  }, [addImages, loadAny, say, setSource, settings.inputMode]);
 
   const generateWithMeshy = useCallback(async (image: File | null, apiKey: string) => {
     const file = image ?? photoBlob();
@@ -237,6 +253,13 @@ export function ActionsProvider({ children }: { children: React.ReactNode }) {
     if (!reliefBase) return;
     scheduleAutosave({ projectName, settings, sourceAsset, base: reliefBase, mask });
   }, [projectName, settings, sourceAsset, reliefBase, mask]);
+  // Leaving for ChatGPT hides this tab; write the session at once instead of trusting a timer in a hidden tab.
+  useEffect(() => {
+    const onHide = () => { if (document.visibilityState === 'hidden') flushAutosave(); };
+    document.addEventListener('visibilitychange', onHide);
+    window.addEventListener('pagehide', flushAutosave);
+    return () => { document.removeEventListener('visibilitychange', onHide); window.removeEventListener('pagehide', flushAutosave); };
+  }, []);
 
   const restoreSession = useCallback(async () => {
     if (!restorable) return;
@@ -266,16 +289,22 @@ export function ActionsProvider({ children }: { children: React.ReactNode }) {
     say(`Restored the session from ${when}. Save the project to keep it for good.`);
   }, [dispatch, restorable, say]);
 
-  const discardSession = useCallback(() => { setRestorable(null); void clearAutosave(); }, []);
+  const discardSession = useCallback(() => {
+    // Only that session's photo leaves the tray; other pictures waiting there are not part of it.
+    const photo = restorable?.sourceAsset?.kind === 'image' ? restorable.sourceAsset.dataUrl : null;
+    if (photo) forgetPicture(photo);
+    setRestorable(null);
+    void clearAutosave();
+  }, [forgetPicture, restorable]);
 
   const value = useMemo<Actions>(() => ({
     pickPhoto: () => photoInput.current?.click(),
     pickMesh: () => meshInput.current?.click(),
     pickProject: () => projectInput.current?.click(),
-    loadPhoto, loadMesh, loadSample, loadAny, runDepth, runCutout, thresholdMask, clearMask, generate,
+    loadPhoto, loadMesh, loadSample, loadAny, loadDropped, runDepth, runCutout, thresholdMask, clearMask, generate,
     saveProject, newProject, exportZip, setStyle, setSource, generateWithMeshy,
     restorable, restoreSession, discardSession
-  }), [loadPhoto, loadMesh, loadSample, loadAny, runDepth, runCutout, thresholdMask, clearMask, generate, saveProject, newProject, exportZip, setStyle, setSource, generateWithMeshy, restorable, restoreSession, discardSession]);
+  }), [loadPhoto, loadMesh, loadSample, loadAny, loadDropped, runDepth, runCutout, thresholdMask, clearMask, generate, saveProject, newProject, exportZip, setStyle, setSource, generateWithMeshy, restorable, restoreSession, discardSession]);
 
   const pick = (load: (f: File) => unknown) => (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
@@ -285,7 +314,11 @@ export function ActionsProvider({ children }: { children: React.ReactNode }) {
 
   return <Ctx.Provider value={value}>
     {children}
-    <input ref={photoInput} id="photo-file" hidden type="file" accept="image/png,image/jpeg,image/webp" onChange={pick(f => loadPhoto(f))}/>
+    <input ref={photoInput} id="photo-file" hidden type="file" multiple accept="image/png,image/jpeg,image/webp" onChange={e => {
+      const files = Array.from(e.target.files ?? []);
+      e.target.value = ''; // choosing the same file again should still fire
+      if (files.length) void addImages(files);
+    }}/>
     <input ref={meshInput} id="mesh-file" hidden type="file" accept=".stl,.obj,.glb" onChange={pick(loadMesh)}/>
     <input ref={projectInput} id="project-file" hidden type="file" accept=".json" onChange={pick(loadProject)}/>
   </Ctx.Provider>;

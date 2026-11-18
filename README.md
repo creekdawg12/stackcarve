@@ -1,6 +1,6 @@
 # StackCarve
 
-StackCarve is a browser app that turns a 3D model or a photo into CNC cut files for a layered sheet sculpture. Everything runs client side. It is set up around a Sienci AltMill MK2 (48 × 48 in bed), Fusion 360 for CAM, and 4 × 8 ft sheet stock, with decimal inches throughout.
+StackCarve is a browser app that turns a photo, a 3D model or just an idea into CNC cut files for a layered sheet sculpture. Everything runs client side. It is set up around a Sienci AltMill MK2 (48 × 48 in bed), Fusion 360 for CAM, and 4 × 8 ft sheet stock, with decimal inches throughout.
 
 Live app: https://creekdawg12.github.io/stackcarve/
 
@@ -15,11 +15,32 @@ The app is four steps across the top. Any step can be opened at any time; the ma
    - **Notes:** whether the largest part fits the sheet, whether the job fits the stock on hand (with one-tap fixes such as a size that fits), too many or too few pieces, and when the weight calls for a French cleat.
 
    The numbers start as a rough estimate for a typical portrait, tighten to an estimate measured off your photo or model once it is loaded, and are replaced by the generated figures (in ink, with the total cut length) after Generate. **Print this plan** gives a one-page sheet for the shop.
-2. **Photo** or **Model.** Load the source. For a photo: estimate depth, cut out the subject, paint the cutout if needed. For a model: turn it the right way up.
+2. **Design** or **Model.** For a photo build, this is where the picture comes from: describe the piece and have ChatGPT draw it, or bring your own photo. Each picture is shown as it would be cut and scored, and one is chosen (see Design, below). For a model: turn it the right way up.
 3. **Slices.** Generate, then check the piece in 3D. The panel lists what came out and anything to check before cutting. Hollowing, rods or pins, and part numbers are tucked into folds here.
 4. **Sheets.** The nested sheets, the **Before you cut** checklist, and the cut files.
 
 The last brief is remembered in the browser, so the app reopens on your stock and sizes. **New project** in the menu at the top right clears it.
+
+## Design: from an idea to the picture you cut
+
+Wall art only needs a picture, because StackCarve works the depth out on the device. So the Design step gets a good picture and checks it before any wood is planned around it. It uses your own ChatGPT plan through the ordinary ChatGPT site: no API, no key, nothing to set up.
+
+1. **Say what it should be**, for example "English bulldog face, grumpy, big jowls". **Open ChatGPT with the prompt** opens ChatGPT in a new tab with the whole prompt already in the box, and copies it as well in case the box comes up empty. Send it.
+2. **Copy the picture** ChatGPT makes (press and hold, or right-click, then Copy image), come back and **Paste**. Ctrl+V, dropping a file and **Choose photos** work too.
+3. The prompt asks for **four takes on one sheet**: true to life, simplified, exaggerated and geometric. StackCarve takes the sheet apart into four pictures, each cropped and cut out from the white background. If the designs touch, or the sheet comes in whole, **cut it into quarters** splits it by position instead.
+4. **Judge** runs the depth model on each picture and shows it the way your plan would cut it, with two scores from 0 to 100:
+   - **Detail kept:** how much of the shape survives at your slab spacing or layer thickness.
+   - **Sturdy:** how few pieces come out loose from the main body or sliver-thin.
+
+   Each picture gets a verdict (Good to cut, Worth a tweak, Needs rework) and the main button offers the top pick. The scores follow the plan: thicker stock or a smaller piece keeps less detail, so one picture can pass on one brief and fail on another. The large view shows the piece at about the size it looks from 10, 20 or 40 ft, and slab builds can be seen at an angle or dead on.
+5. **Ask ChatGPT for changes** writes the follow-up: it names the design by its place on the sheet, lists what the checks call for (simplify fine detail, thicken thin parts, push the depth, show the whole subject) plus anything you type, and asks for that one design on its own. Paste it into the same ChatGPT chat, then paste the new picture back.
+6. **Use this one** makes a picture the one the slicer works from. **Fine-tune** opens the cutout brush and the depth controls for it (see From a photo).
+
+**Ask Claude** copies a numbered sheet of the pictures as cut and opens Claude with a short question, for a second opinion on which one reads best from across a room. Paste the sheet into the message.
+
+**The prompt** fold shows the text that is sent and lets you edit it; `{idea}` marks where your idea goes. The built-in prompt asks for what the depth model and a router both need: one matte gray material under soft, even light (so shading reads as shape, not as paint or shadow), a straight-on view, deep rounded forms with a strong outline, no thin or floating parts, and a plain white background with space around each design (so the designs can be told apart and cut out).
+
+Pictures wait in a tray of up to 12. The tray, the idea and any prompt edits are kept in this browser only, so leaving for ChatGPT and coming back loses nothing, even if a tablet drops the tab in the meantime. A project file saves the picture in use, with its depth and cutout, and not the rest of the tray.
 
 ## Three ways to build
 
@@ -50,7 +71,7 @@ Wall art from a model needs it oriented face toward you with the top up. The Mod
 
 ### From a photo
 
-Wall art only shows the front surface, so a depth map of the photo is all the 3D the slicer needs. The **Photo** step offers two depth sources and a cutout, all computed in the browser:
+Wall art only shows the front surface, so a depth map of the photo is all the 3D the slicer needs. The **Fine-tune** view of the Design step offers two depth sources and a cutout, all computed in the browser. A single photo added on its own opens straight into it; pictures judged in the tray arrive with their depth already estimated.
 
 1. **Estimate depth** runs Depth Anything V2 Small (Apache-2.0) through Transformers.js, on the GPU via WebGPU when the browser has it, otherwise on the CPU. It predicts relative depth from a single photo: the nose comes forward, the ears fall back toward the wall.
 2. **Cut out subject** runs RMBG-1.4 to separate the subject from the background. The resulting mask is the silhouette of the piece. RMBG-1.4 is licensed for non-commercial use; swap the model id in `src/defaults.ts` if that matters to you.
@@ -87,6 +108,7 @@ Each piece gets an etched label (`17/42`, with A/B suffixes for islands) plus an
 
 - **Mesh input:** STL, OBJ, and GLB through Three.js loaders, with welding, winding fix, and manifold diagnostics.
 - **Photo input:** AI depth (Depth Anything V2 Small) or brightness heightmap, AI cutout (RMBG-1.4) or threshold mask with a brush editor, depth curve (floor, levels, gamma, blur), terrace quantization with marching-squares contours, or slab profiles per band.
+- **Design:** a prompt handed to ChatGPT by link and clipboard, sheets taken apart by background and connected subjects with a quarter-cut fallback, each picture judged on the device as it would be cut (detail kept, sturdiness), follow-up prompts, and a contact sheet for a second opinion.
 - **Planning:** estimates from a front view of the subject (photo depth, a rasterised model, or a built-in sample), checked against the real slicer and nester in the tests; sheet counts are given as a range when the estimate straddles a sheet.
 - **Model from a photo:** pluggable `ImageTo3DProvider` interface with a Meshy implementation, under the Model step. The API key stays in browser `localStorage`.
 - **Slicing:** statue slices along X, Y, or Z; terraced slices parallel to the wall with a back-plane cut and silhouette base; slab slices clipped to a flat back, horizontal or vertical, touching or gapped.
@@ -124,6 +146,19 @@ The static output is written to `dist/`.
 ## GitHub Pages
 
 `.github/workflows/deploy.yml` builds and publishes on every push to `main`. In the repository, **Settings → Pages → Source** must be **GitHub Actions**. Vite uses `base: './'`, so the build works under the repository subpath.
+
+## Cloudflare
+
+The same app can run on Cloudflare alongside GitHub Pages. `wrangler.jsonc` tells Cloudflare to serve `dist` as a static site, and `npm run build:cloudflare` makes a build that fits its limit of 25 MiB per file: it leaves out a 26.9 MB copy of the AI runtime that the app never requests (`scripts/prune-oversize.mjs` has the details). Once connected, every push to `main` redeploys both sites.
+
+One-time setup in the Cloudflare dashboard:
+
+1. **Workers & Pages → Create application → GitHub.** If `stackcarve` is not in the list, follow the link there to give the Cloudflare GitHub app access to this repository.
+2. Select `stackcarve`. Keep the project name `stackcarve` (it has to match `wrangler.jsonc`) and the branch `main`.
+3. **Build command:** `npm run build:cloudflare`. **Deploy command:** leave it as offered (`npx wrangler deploy`). No variables are needed.
+4. **Save and Deploy.** After a couple of minutes the project page shows the address, ending in `workers.dev`.
+
+The two sites are separate as far as a browser is concerned: saved sessions, the picture tray, the remembered brief and the downloaded AI models do not carry from one address to the other, so pick one for everyday use. The Cloudflare site is public, like the GitHub Pages one. Photos never leave the device on either.
 
 ## Meshy image-to-3D
 
@@ -180,8 +215,9 @@ Sections are cut with a deterministic triangle-plane sectioner and stitched into
 
 ```text
 src/
-  components/   step panels, plan sheet, Three.js model/slice views, sheet view
-  plan/         front field, estimates, notes, compare rows, style preview
+  components/   step panels, plan sheet, design stage, Three.js model/slice views, sheet view
+  design/       ChatGPT prompt, sheet splitting, carve scores, picture tray and its storage
+  plan/         front field, estimates, notes, compare rows, style and angled previews
   engine/       hollowing, dowels, rods and wall-art geometry, etching, nesting, pipeline
   export/       DXF, SVG, ZIP, project JSON
   geometry/     polygon utilities and clipping adapter

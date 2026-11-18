@@ -32,6 +32,8 @@
   --pencil: #556167;
   --redline: #bf2a1f;
   --highlight: #ffe768;
+  /* A painted wall, for showing pieces the way they will hang */
+  --wall: #e7e2d6;
 
   --font: 'Barlow', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-tight: 'Barlow Condensed', 'Barlow', system-ui, sans-serif;
@@ -190,7 +192,8 @@ ol, ul { padding: 0; list-style: none; }
 
 .link { padding: 8px 0; border: 0; background: none; color: var(--amber); font-size: 13.5px; text-align: left; text-decoration: underline; text-underline-offset: 3px; }
 .link:hover { color: var(--amber-hover); }
-.link.centre { text-align: center; padding: 2px 0 0; }
+/* Tall enough to hit with a thumb; the negative margin keeps the bar it sits in from growing by as much. */
+.link.centre { text-align: center; padding: 9px 0 8px; margin: -5px 0 -7px; }
 
 .step-panel { display: grid; gap: 4px; }
 .group { padding: 0 0 18px; }
@@ -361,6 +364,119 @@ ol, ul { padding: 0; list-style: none; }
 .sheet-label { font-size: 1.1px; font-weight: 700; fill: #332516; text-anchor: middle; dominant-baseline: middle; pointer-events: none; }
 .sheet-stats { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 4px 20px; min-height: 36px; padding: 8px 12px; border-top: 1px solid var(--line); font-size: 13px; color: var(--text-3); }
 
+/* ---------- Design step: pictures in, judged as cut, one chosen ---------- */
+
+.design-stage { position: absolute; inset: 0 0 var(--status-h) 0; display: flex; flex-direction: column; overflow-y: auto; overscroll-behavior: contain; container-type: inline-size; }
+.design-bar {
+  flex: none; position: sticky; top: 0; z-index: 3; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px;
+  padding: 10px 14px; border-bottom: 1px solid var(--line); background: var(--bench-2);
+}
+.design-tools { display: flex; flex-wrap: wrap; gap: 6px; }
+.design-tune { position: relative; flex: 1; min-height: 380px; }
+.design-tune .photo-bench { inset: 0; }
+.design-empty { flex: 1; display: grid; place-items: center; padding: 24px; }
+.design-body { display: grid; gap: 16px; padding: 14px; align-items: start; }
+.detail-col { min-width: 0; }
+.design-note { padding: 8px 2px; color: var(--text-3); }
+/* Wide enough for two columns: the tiles and the details each scroll on their own, so the tiles stay in reach. */
+@container (min-width: 800px) {
+  .design-body { flex: 1 1 0; min-height: 0; grid-template-columns: minmax(0, 1fr) minmax(344px, 414px); grid-template-rows: minmax(0, 1fr); gap: 0; padding: 0; align-items: stretch; }
+  .tiles-wrap, .detail-col { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 14px; }
+  .tiles-wrap { align-content: start; }
+  .detail-col { padding-left: 2px; }
+  /* The tiles are right alongside, so stepping through from the details is not needed. */
+  .inspector-step { display: none; }
+}
+
+.tiles-wrap { min-width: 0; display: grid; gap: 10px; }
+.split-note { padding: 8px 12px; border: 1px solid #7a5323; border-radius: 10px; background: #33250f; color: #ffdca6; font-size: 13.5px; }
+.split-note .link { display: inline; padding: 0; color: inherit; font-size: inherit; font-weight: 600; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.tile {
+  width: 100%; display: grid; gap: 4px; justify-items: start; padding: 6px 6px 9px; border: 1.5px solid var(--line); border-radius: 10px;
+  background: var(--bench-2); color: var(--text); text-align: left;
+}
+.tile:hover { border-color: var(--line-strong); }
+.tile.selected { border-color: var(--amber); background: #f0a84b12; }
+.tile-wall { position: relative; width: 100%; aspect-ratio: 1; display: grid; place-items: center; overflow: hidden; border-radius: 6px; background: var(--wall); }
+/* Fitted by object-fit: a percentage height has nothing to resolve against inside an aspect-ratio box. */
+.tile-wall canvas { position: absolute; inset: 8%; width: 84%; height: 84%; object-fit: contain; filter: drop-shadow(0 2px 3px #2b2a1c66); }
+.tile-wall img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #fff; }
+.tile-no {
+  position: absolute; left: 6px; top: 6px; min-width: 22px; height: 22px; padding: 0 5px; display: grid; place-items: center; border-radius: 11px;
+  background: #1b292e; color: #fff; font-family: var(--font-tight); font-weight: 600; font-size: 13.5px;
+}
+.tile-flag { position: absolute; right: 6px; top: 6px; padding: 2px 8px; border-radius: 10px; background: var(--amber); color: var(--amber-ink); font-size: 12px; font-weight: 600; }
+.tile-name { padding: 3px 2px 0; font-weight: 600; }
+.tile-state { padding: 0 2px; font-size: 12.5px; color: var(--text-3); }
+.tile-scores { display: flex; flex-wrap: wrap; gap: 2px 10px; padding: 0 2px; font-size: 12.5px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.tile-scores b { color: var(--text); font-weight: 600; }
+
+.verdict { display: inline-block; padding: 2px 9px; border-radius: 11px; font-size: 12.5px; font-weight: 600; white-space: nowrap; }
+.verdict.cut { background: #173d2a; color: var(--good); }
+.verdict.tweak { background: #4a3413; color: #ffdca6; }
+.verdict.rework { background: #5a211b; color: #ffd2cb; }
+
+.inspector { display: grid; gap: 12px; padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--bench-2); scroll-margin-top: 72px; }
+.inspector-step { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 13px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.inspector-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.inspector-head h2 { min-width: 0; font-family: var(--font-tight); font-size: 23px; font-weight: 600; letter-spacing: .01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inspector-views { display: grid; grid-template-columns: minmax(0, 1fr) 84px; gap: 10px; align-items: start; }
+.wall-view { min-width: 0; }
+.wall { display: grid; place-items: center; min-height: 190px; padding: 14px; border-radius: 8px; background: var(--wall); overflow: hidden; }
+.wall canvas { max-width: 100%; filter: drop-shadow(0 3px 4px #2b2a1c66); }
+.wall img { max-width: 100%; max-height: 300px; border-radius: 4px; }
+.wall-foot { display: grid; gap: 6px; justify-items: start; margin-top: 8px; }
+.wall-switches { display: flex; flex-wrap: wrap; gap: 6px; }
+.wall-foot small, .source-view figcaption { font-size: 12.5px; color: var(--text-3); }
+.source-view img { display: block; width: 100%; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
+.source-view figcaption { margin-top: 4px; }
+.inspector .row { min-height: 40px; }
+.inspector .facts { margin: 0; }
+.inspector-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.inspector-actions .btn.primary { flex: 1; }
+
+.meters { display: grid; gap: 12px; }
+.meter-head { display: flex; align-items: baseline; justify-content: space-between; font-weight: 500; }
+.meter-head b { font-family: var(--font-tight); font-size: 21px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.meter-track { height: 8px; margin: 3px 0 5px; border-radius: 4px; background: var(--well); overflow: hidden; }
+.meter-track i { display: block; height: 100%; border-radius: 4px; background: var(--good); }
+.meter.fair .meter-track i { background: var(--amber); }
+.meter.poor .meter-track i { background: var(--bad); }
+.meter small { display: block; font-size: 12.5px; color: var(--text-3); line-height: 1.35; }
+
+.ask { display: grid; gap: 8px; padding-top: 12px; border-top: 1px solid var(--line); }
+.ask h3 { font-size: 15px; font-weight: 600; }
+.ask-list { display: grid; }
+.ask .toggle { min-height: 38px; padding: 7px 0; }
+.ask .toggle em { display: block; font-style: normal; font-size: 12.5px; color: #ffdca6; }
+.ask .fold-head { min-height: 40px; }
+.own-change { width: 100%; height: 40px; padding: 0 10px; background: var(--well); border: 1px solid var(--line); border-radius: var(--radius); }
+.own-change::placeholder, .idea::placeholder { color: var(--text-3); }
+.follow-up { white-space: pre-wrap; font-size: 13px; line-height: 1.45; color: var(--text-2); user-select: all; -webkit-user-select: all; }
+
+.idea, .prompt-text {
+  display: block; width: 100%; padding: 10px; background: var(--well); border: 1px solid var(--line); border-radius: var(--radius);
+  color: var(--text); font: inherit; line-height: 1.4; resize: vertical;
+}
+.idea { min-height: 72px; margin-bottom: 8px; }
+.idea:focus, .prompt-text:focus, .own-change:focus { border-color: var(--amber); }
+.prompt-text { min-height: 190px; margin: 6px 0 2px; font-size: 13px; color: var(--text-2); }
+a.btn { text-decoration: none; }
+.step-panel .btn.wide { margin-top: 0; }
+.idea-inline { flex: none; padding: 12px 14px 6px; background: var(--bench-2); border-bottom: 1px solid var(--line); }
+.idea-inline h2 { font-size: 16px; font-weight: 600; margin-bottom: 10px; }
+.idea-inline > .fold { border-top: 0; }
+.in-use { margin: -4px 0 8px; font-weight: 500; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.carve-card {
+  width: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--well); color: var(--text-2); font-size: 13px; text-align: left;
+}
+.carve-card:hover { border-color: var(--line-strong); }
+.carve-score b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+.carve-score.fair b { color: #ffdca6; }
+.carve-score.poor b { color: var(--bad); }
+
 /* ---------- Plan sheet (calc pad) ---------- */
 
 .plan-stage { position: absolute; inset: 0 0 var(--status-h) 0; overflow-y: auto; padding: 18px; container-type: inline-size; }
@@ -514,11 +630,15 @@ ol, ul { padding: 0; list-style: none; }
   .explode input { width: 96px; }
   .slices-wrap .view-buttons { top: 60px; }
   .viewport-hint { font-size: 12.5px; }
+  .design-bar { padding: 8px 10px; }
+  .design-body { padding: 10px; }
+  .tiles { grid-template-columns: repeat(auto-fill, minmax(136px, 1fr)); gap: 8px; }
+  .inspector { padding: 12px; }
 }
 
 /* Touch screens: 16 px fields are easier to read at arm's length, and iPhone Safari zooms the page on anything smaller. */
 @media (pointer: coarse) {
-  input:not([type='range']):not([type='checkbox']), select { font-size: 16px; }
+  input:not([type='range']):not([type='checkbox']), select, textarea.idea, textarea.prompt-text { font-size: 16px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

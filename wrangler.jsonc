@@ -1,0 +1,9 @@
+// Cloudflare settings: serve the built app (dist) as a static site.
+// The name must match the project name chosen in the Cloudflare dashboard.
+{
+  "name": "stackcarve",
+  "compatibility_date": "2026-11-01",
+  "assets": {
+    "directory": "./dist"
+  }
+}

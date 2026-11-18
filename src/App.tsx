@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { StoreProvider, useStore } from './store';
 import { ActionsProvider, useActions } from './actions';
+import { DesignProvider } from './design/DesignContext';
 import { PlanProvider, usePlan } from './plan/PlanContext';
 import { piecesText, rangeText, sizeText } from './plan/format';
 import { sourceReady } from './engine/generate';
@@ -12,7 +13,7 @@ import { SlicesPanel } from './components/panels/SlicesPanel';
 import { SheetsPanel } from './components/panels/SheetsPanel';
 import { PlanSheet } from './components/PlanSheet';
 import { ModelViewport } from './components/ModelViewport';
-import { PhotoWorkbench } from './components/PhotoWorkbench';
+import { DesignStage } from './components/DesignStage';
 import { SlicesViewport } from './components/SlicesViewport';
 import { SheetsView } from './components/SheetsView';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -26,7 +27,7 @@ function StepNav() {
   const photo = settings.inputMode === 'relief';
   const ready = sourceReady({ settings, mesh, reliefBase });
   const fresh = !!result && !stale;
-  const labels: Record<AppStep, string> = { plan: 'Plan', source: photo ? 'Photo' : 'Model', slices: 'Slices', sheets: 'Sheets' };
+  const labels: Record<AppStep, string> = { plan: 'Plan', source: photo ? 'Design' : 'Model', slices: 'Slices', sheets: 'Sheets' };
   const done: Record<AppStep, boolean> = { plan: ready || !!result, source: ready, slices: fresh, sheets: false };
   return <nav className="steps" aria-label="Steps">
     {STEP_ORDER.map((id, i) => <button key={id} type="button" className={`${step === id ? 'active' : ''} ${done[id] ? 'done' : ''}`} aria-current={step === id ? 'step' : undefined} onClick={() => dispatch({ type: 'step', value: id })}>
@@ -145,16 +146,16 @@ function Workspace() {
         <ActionBar/>
       </aside>
       <section className={dragging ? 'stage dropping' : 'stage'}
-        onDragOver={e => { if (e.dataTransfer?.types.includes('Files')) { e.preventDefault(); setDragging(true); } }}
+        onDragOver={e => { const types = e.dataTransfer?.types ?? []; if (types.includes('Files') || types.includes('text/uri-list')) { e.preventDefault(); setDragging(true); } }}
         onDragLeave={() => setDragging(false)}
-        onDrop={e => { e.preventDefault(); setDragging(false); const f = e.dataTransfer?.files?.[0]; if (f) void actions.loadAny(f); }}>
+        onDrop={e => { e.preventDefault(); setDragging(false); actions.loadDropped(e.dataTransfer); }}>
         {step === 'plan' && <PlanSheet/>}
         {step === 'source' && <SourceStage/>}
         {step === 'slices' && <SlicesViewport/>}
         {step === 'sheets' && <SheetsView/>}
         {stale && result && (step === 'slices' || step === 'sheets') && <div className="stale-banner" role="status"><span>Settings changed since this was generated.</span><button type="button" className="btn primary" onClick={() => { void actions.generate(); }}>Regenerate</button></div>}
         {busy && <div className="busy-overlay" role="alert" aria-live="polite"><div className="spinner"/><b>{busy}</b><span>{status}</span><div className="progress"><i style={{ width: `${Math.max(2, progress)}%` }}/></div>
-          {/depth|cutting out/i.test(busy) && <button type="button" className="btn" onClick={() => { cancelAi(); dispatch({ type: 'busy', label: null, status: 'Cancelled.' }); }}>Cancel</button>}</div>}
+          {/depth|cutting out|judging/i.test(busy) && <button type="button" className="btn" onClick={() => { cancelAi(); dispatch({ type: 'busy', label: null, status: 'Cancelled.' }); }}>Cancel</button>}</div>}
         <div className={problem ? 'statusbar problem' : 'statusbar'}>
           <span title={status}>{status}</span>
           <div className="status-right">
@@ -172,12 +173,12 @@ function Workspace() {
   </div>;
 }
 
-/** Step two shows the photo bench or the 3D model, whichever the plan is made from. */
+/** Step two shows the design bench (pictures in, one chosen) or the 3D model, whichever the plan is made from. */
 function SourceStage() {
   const { settings } = useStore();
-  return settings.inputMode === 'relief' ? <PhotoWorkbench/> : <ModelViewport/>;
+  return settings.inputMode === 'relief' ? <DesignStage/> : <ModelViewport/>;
 }
 
 export function App() {
-  return <ErrorBoundary><StoreProvider><ActionsProvider><PlanProvider><Workspace/></PlanProvider></ActionsProvider></StoreProvider></ErrorBoundary>;
+  return <ErrorBoundary><StoreProvider><DesignProvider><ActionsProvider><PlanProvider><Workspace/></PlanProvider></ActionsProvider></DesignProvider></StoreProvider></ErrorBoundary>;
 }

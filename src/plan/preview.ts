@@ -1,6 +1,7 @@
 import type { MaterialId, ProjectSettings } from '../types';
 import type { FrontField } from './field';
 import { resolveField, type ResolvedField } from './plan';
+import { slabStack } from './cut';
 
 /** Sheet-good colours for the preview, as [r, g, b]. */
 const WOOD: Record<MaterialId, [number, number, number]> = {
@@ -116,6 +117,68 @@ export function renderFrontPreview(settings: ProjectSettings, field: FrontField,
     put(i, Math.min(1.12, shade));
   }
   return { width, height, rgba, widthIn: cols * r.cell, heightIn: rows * r.cell };
+}
+
+/**
+ * The same piece seen from an angle, for slab builds. Dead on, a stack of slabs shows little but
+ * its outline; step to one side and the edges line up into the form. Vertical slabs are viewed
+ * from the right, side-to-side slabs from above, so the long faces between the slabs show.
+ * Other styles already read from the front and are returned as the front view.
+ */
+export function renderAnglePreview(settings: ProjectSettings, field: FrontField, maxPx = 620, angleDeg = 34): FrontPreview | null {
+  const r = resolveField(settings, field);
+  if (r.mode !== 'slabs') return renderFrontPreview(settings, field, maxPx);
+  const { slabs, vertical, samples } = slabStack(settings, r);
+  const t = settings.materialThickness;
+  const gap = Math.max(0, settings.wallArt.slabGap);
+  const keep = Math.max(1e-6, r.keep);
+  // Extent of what will be drawn: slabs that exist, and the stretch of their length that is used.
+  let first = -1, last = -1, s0 = samples, s1 = -1;
+  slabs.forEach((slab, i) => {
+    let used = false;
+    for (let s = 0; s < samples; s++) if (slab.profile[s] > 0) { used = true; if (s < s0) s0 = s; if (s > s1) s1 = s; }
+    if (used) { if (first < 0) first = i; last = i; }
+  });
+  if (first < 0) return null;
+  const a0 = slabs[first].at, a1 = slabs[last].at + t;
+  const cos = Math.cos(angleDeg * Math.PI / 180), sin = Math.sin(angleDeg * Math.PI / 180);
+  // Along the stack, a point at distance a and height z above the wall lands at a*cos - z*sin.
+  const project = (a: number, z: number) => (a - a0) * cos - z * sin;
+  const pMin = -keep * sin, pMax = (a1 - a0) * cos;
+  const acrossIn = pMax - pMin, alongIn = (s1 - s0 + 1) * r.cell;
+  const ppi = Math.max(1, maxPx / Math.max(acrossIn, alongIn));
+  const acrossPx = Math.max(1, Math.round(acrossIn * ppi)), alongPx = Math.max(1, Math.round(alongIn * ppi));
+  const width = vertical ? acrossPx : alongPx, height = vertical ? alongPx : acrossPx;
+  const rgba = new Uint8ClampedArray(width * height * 4);
+  const wood = WOOD[settings.plan.material] ?? WOOD.mdf;
+  // Vertical slabs: the stack runs left to right. Side-to-side slabs: it runs bottom to top, so flip it.
+  const index = (across: number, along: number) => (vertical ? along * width + across : (acrossPx - 1 - across) * width + along) * 4;
+  const fill = (from: number, to: number, along: number, shade: number) => {
+    const lo = Math.max(0, Math.round((Math.min(from, to) - pMin) * ppi)), hi = Math.min(acrossPx - 1, Math.round((Math.max(from, to) - pMin) * ppi) - 1);
+    for (let x = lo; x <= hi; x++) {
+      const i = index(x, along);
+      rgba[i] = wood[0] * shade; rgba[i + 1] = wood[1] * shade; rgba[i + 2] = wood[2] * shade; rgba[i + 3] = 255;
+    }
+  };
+  const sampleAt = (along: number) => Math.min(samples - 1, s0 + Math.floor((along + 0.5) / ppi / r.cell));
+  const backer = settings.wallArt.backerPlate && gap > 0;
+  // Far slabs first; each nearer one paints over what it hides.
+  for (let i = first; i <= last; i++) {
+    const slab = slabs[i];
+    for (let along = 0; along < alongPx; along++) {
+      const s = sampleAt(along);
+      const d = slab.profile[s];
+      if (d <= 0) continue;
+      if (backer) fill(project(slab.at, 0), project(slab.at + t + gap, 0), along, 0.46);
+      // The long face between this slab and the next, darker toward the wall.
+      fill(project(slab.at + t, d), project(slab.at + t, 0), along, 0.6);
+      const before = slab.profile[Math.max(0, s - 1)], after = slab.profile[Math.min(samples - 1, s + 1)];
+      const slope = before > 0 && after > 0 ? (after - before) / (2 * r.cell) : 0;
+      const lit = vertical ? slope : -slope;
+      fill(project(slab.at, d), project(slab.at + t, d), along, Math.min(1.12, 0.66 + 0.4 * (d / keep) + Math.max(-0.2, Math.min(0.2, lit * 0.4))));
+    }
+  }
+  return { width, height, rgba, widthIn: vertical ? acrossIn : alongIn, heightIn: vertical ? alongIn : acrossIn };
 }
 
 export interface SectionBand {
