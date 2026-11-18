@@ -111,7 +111,8 @@ export function ActionsProvider({ children }: { children: React.ReactNode }) {
       const values = resampleGrid(normalizeDepth(out.values), out.width, out.height, reliefBase.width, reliefBase.height);
       const base: ReliefBase = { source: 'depth', width: reliefBase.width, height: reliefBase.height, values };
       dispatch({ type: 'reliefBase', base });
-      setRelief({ source: 'depth' });
+      // Estimated depth always comes out near-is-high, so an invert switch set for brightness no longer applies.
+      setRelief({ source: 'depth', invert: false });
       dispatch({ type: 'busy', label: null, progress: 100, status: `Depth estimated on ${out.device}.${mask ? '' : ' Next: cut out the subject, or paint the mask by hand.'}` });
     } catch (e) { say(failure('Depth', e)); }
   }, [dispatch, mask, photoBlob, reliefBase, say, setRelief]);

@@ -14,7 +14,8 @@ export interface Judgement {
 
 /** The photo settings a picture is judged with: the project's curve, and a wall plane fitted to this picture. */
 export function reliefFor(picture: Picture, settings: ProjectSettings): ProjectSettings['relief'] {
-  const base = { ...settings.relief, source: 'depth' as const, depthFloor: 0 };
+  // The invert switch belongs to the picture in use; a picture in the tray is judged as its depth stands.
+  const base = { ...settings.relief, source: 'depth' as const, invert: false, depthFloor: 0 };
   if (!picture.depth) return base;
   return { ...base, depthFloor: suggestFloor(picture.depth, picture.mask, base) };
 }

@@ -10,6 +10,9 @@ import { FAIR, GOOD, maskedBlur, scoreField } from '../design/score';
 import { judgePicture, reliefFor, topPick } from '../design/judge';
 import { packPicture, unpackPicture } from '../design/storage';
 import type { Picture } from '../design/types';
+import { readsInsideOut, reliefWarnings } from '../relief/checks';
+import { composeHeightmap } from '../relief/heightmap';
+import { buildResult } from '../engine/generate';
 import type { ProjectSettings, ReliefBase } from '../types';
 
 /* ---------- helpers ---------- */
@@ -442,5 +445,87 @@ describe('judging pictures', () => {
     const odd = unpackPicture({ ...packPicture(p), mask: new Uint8Array(10) });
     expect(odd.mask).toBeNull();
     expect(odd.maskFrom).toBeNull();
+  });
+});
+
+/* ---------- depth that came out the wrong way round ---------- */
+
+/** A round subject on a square grid: a dome, a bowl (the dome inside out) or a flat disc. */
+function disc(size: number, shape: 'dome' | 'bowl' | 'flat', cx = 0.5) {
+  const height = new Float32Array(size * size), inside = new Uint8Array(size * size);
+  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+    const u = ((x + 0.5) / size - cx) / 0.4, v = ((y + 0.5) / size - 0.5) / 0.4;
+    const r = Math.hypot(u, v);
+    if (r >= 1) continue;
+    const dome = Math.sqrt(1 - r * r);
+    inside[y * size + x] = 255;
+    height[y * size + x] = shape === 'dome' ? dome : shape === 'bowl' ? 1 - dome : 0.6;
+  }
+  return { height, inside };
+}
+
+describe('depth that reads inside out', () => {
+  it('passes a subject that falls away toward its outline, and a flat one', () => {
+    for (const shape of ['dome', 'flat'] as const) {
+      const d = disc(120, shape);
+      expect(readsInsideOut(d.height, d.inside, 120, 120)).toBe(false);
+    }
+  });
+
+  it('catches edges that stand out further than the middle', () => {
+    const d = disc(120, 'bowl');
+    expect(readsInsideOut(d.height, d.inside, 120, 120)).toBe(true);
+  });
+
+  it('does not take the edge of the picture for the edge of the subject', () => {
+    // A dome cut in half by the frame: its high middle sits right on the picture's border.
+    const d = disc(120, 'dome', 0);
+    expect(readsInsideOut(d.height, d.inside, 120, 120)).toBe(false);
+  });
+
+  it('has nothing to say without an outline or a middle', () => {
+    const all = new Uint8Array(400).fill(255), none = new Uint8Array(400);
+    expect(readsInsideOut(new Float32Array(400).fill(0.5), all, 20, 20)).toBe(false);
+    expect(readsInsideOut(new Float32Array(400), none, 20, 20)).toBe(false);
+    const sliver = new Uint8Array(400); for (let y = 2; y < 18; y++) for (let x = 9; x < 12; x++) sliver[y * 20 + x] = 255;
+    expect(readsInsideOut(new Float32Array(400).fill(1), sliver, 20, 20)).toBe(false);
+  });
+
+  it('marks an inside-out picture down and keeps it from being the top pick', () => {
+    const good = picture('good', () => 1);
+    const flipped = picture('flipped', () => 1);
+    flipped.depth = { ...flipped.depth!, values: flipped.depth!.values.map(v => 1 - v) };
+    const a = judgePicture(good, START_SETTINGS)!.scores, b = judgePicture(flipped, START_SETTINGS)!.scores;
+    expect(a.insideOut).toBe(false);
+    expect(b.insideOut).toBe(true);
+    expect(b.verdict).not.toBe('cut');
+    expect(topPick([flipped, good], START_SETTINGS)!.id).toBe('good');
+  });
+
+  it('judges a picture in the tray as its depth stands, whatever the invert switch says', () => {
+    const p = picture('dome', () => 1);
+    const inverted = { ...START_SETTINGS, relief: { ...START_SETTINGS.relief, invert: true } };
+    expect(reliefFor(p, inverted).invert).toBe(false);
+    expect(judgePicture(p, inverted)!.scores.insideOut).toBe(false);
+  });
+
+  it('warns on the Slices step when the piece is cut from brightness or from inside-out depth', async () => {
+    const p = picture('dome', () => 1);
+    const relief = reliefFor(p, START_SETTINGS);
+    const compose = (base: ReliefBase) => composeHeightmap(base, { settings: relief, mask: p.mask, preview: false });
+    expect(reliefWarnings(p.depth!, relief, compose(p.depth!))).toEqual([]);
+    const flipped: ReliefBase = { ...p.depth!, values: p.depth!.values.map(v => 1 - v) };
+    const flippedRelief = reliefFor({ ...p, depth: flipped }, START_SETTINGS);
+    expect(reliefWarnings(flipped, flippedRelief, composeHeightmap(flipped, { settings: flippedRelief, mask: p.mask, preview: false })).map(w => w.id)).toEqual(['relief-inside-out']);
+    const bright: ReliefBase = { ...p.depth!, source: 'luminance' };
+    expect(reliefWarnings(bright, { ...relief, source: 'luminance' }, compose(bright)).map(w => w.id)).toEqual(['relief-brightness']);
+    // Estimated depth is there, but "Depth from: Brightness" is chosen: still brightness.
+    expect(reliefWarnings(p.depth!, { ...relief, source: 'luminance' }, compose(p.depth!)).map(w => w.id)).toEqual(['relief-brightness']);
+    // And it reaches the generated result, first in the list.
+    const settings = { ...START_SETTINGS, relief: { ...relief, source: 'luminance' as const } };
+    const result = await buildResult({ settings, mesh: null, reliefBase: bright, mask: p.mask });
+    expect(result.warnings[0].id).toBe('relief-brightness');
+    const fine = await buildResult({ settings: { ...START_SETTINGS, relief }, mesh: null, reliefBase: p.depth!, mask: p.mask });
+    expect(fine.warnings.some(w => w.id.startsWith('relief-'))).toBe(false);
   });
 });

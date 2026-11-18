@@ -1,4 +1,5 @@
 import type { ProjectSettings } from '../types';
+import { readsInsideOut } from '../relief/checks';
 import type { FrontField } from '../plan/field';
 import { resolveField, type ResolvedField } from '../plan/plan';
 import { slabStack } from '../plan/cut';
@@ -42,6 +43,8 @@ export interface Scores {
   pieces: number;
   /** True when the subject runs off the top or a side of the picture. */
   cropped: boolean;
+  /** True when the edges stand out further than the middle: the depth probably came out inside out. */
+  insideOut: boolean;
 }
 
 export const GOOD = 70;
@@ -193,13 +196,20 @@ function runsOffEdge(field: FrontField): boolean {
 
 const toScore = (v: number) => Math.round(clamp01(v) * 100);
 
+/** Height off the wall, 0 to 1, from a photo field's distance behind its closest point. */
+function heightOf(field: FrontField): Float32Array {
+  const out = new Float32Array(field.behind.length);
+  for (let i = 0; i < out.length; i++) out[i] = field.inside[i] ? 1 - Math.min(1, field.behind[i]) : 0;
+  return out;
+}
+
 export function scoreField(settings: ProjectSettings, field: FrontField): Scores {
   const r = resolveField(settings, field);
   let any = false;
   for (let i = 0; i < r.inside.length && !any; i++) any = r.inside[i] === 1;
   if (!any) {
     const nothing = 'Nothing to cut at these settings.';
-    return { detail: 0, sturdy: 0, rank: 0, verdict: 'rework', fragile: 0, pieces: 0, cropped: false, notes: { detail: nothing, sturdy: nothing }, suggestions: [] };
+    return { detail: 0, sturdy: 0, rank: 0, verdict: 'rework', fragile: 0, pieces: 0, cropped: false, insideOut: false, notes: { detail: nothing, sturdy: nothing }, suggestions: [] };
   }
   const slabs = r.mode === 'slabs';
   const t = settings.materialThickness;
@@ -233,8 +243,10 @@ export function scoreField(settings: ProjectSettings, field: FrontField): Scores
 
   const worst = Math.min(detail, sturdy);
   // A subject that runs off the picture can still be cut, but it is never the finished answer.
-  const verdict: Verdict = worst >= GOOD ? (cropped ? 'tweak' : 'cut') : worst >= FAIR ? 'tweak' : 'rework';
-  return { detail, sturdy, rank: 0.6 * detail + 0.4 * sturdy - (cropped ? 5 : 0), verdict, notes, suggestions, fragile, pieces, cropped };
+  // Photo depth only: a model's shape is what it is.
+  const insideOut = field.kind !== 'mesh' && readsInsideOut(heightOf(field), field.inside, field.cols, field.rows);
+  const verdict: Verdict = worst >= GOOD ? (cropped || insideOut ? 'tweak' : 'cut') : worst >= FAIR ? 'tweak' : 'rework';
+  return { detail, sturdy, rank: 0.6 * detail + 0.4 * sturdy - (cropped ? 5 : 0) - (insideOut ? 40 : 0), verdict, notes, suggestions, fragile, pieces, cropped, insideOut };
 }
 
 function ordinalWord(n: number): string {

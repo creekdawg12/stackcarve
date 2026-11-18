@@ -54,6 +54,8 @@ interface DesignValue {
   use: (id: string) => Promise<void>;
   useTopPick: () => Promise<void>;
   remove: (id: string) => void;
+  /** Turn one picture's depth inside out. */
+  flipDepth: (id: string) => void;
   /** Empty the tray of everything except the picture in use. */
   removeOthers: () => void;
   /** Drop a picture by its image, when the saved session it belonged to is discarded. */
@@ -137,9 +139,9 @@ export function DesignProvider({ children }: { children: React.ReactNode }) {
     setActiveId(p.id);
     dispatch({ type: 'source', asset: { kind: 'image', name: fileName(p), mimeType: p.mimeType, dataUrl: p.dataUrl, sizeBytes: Math.round(p.dataUrl.length * 0.75) } });
     dispatch({ type: 'reliefBase', base, mask: cutout });
-    const relief = { ...settingsRef.current.relief, source: p.depth ? 'depth' as const : 'luminance' as const, depthFloor: 0 };
-    // The wall plane fitted to the last picture would slice into this one; fit it to this subject.
-    dispatch({ type: 'relief', value: { source: relief.source, depthFloor: p.depth && cutout ? suggestFloor(base, cutout, relief) : 0 } });
+    const relief = { ...settingsRef.current.relief, source: p.depth ? 'depth' as const : 'luminance' as const, invert: false, depthFloor: 0 };
+    // The wall plane and the invert switch set for the last picture would be wrong for this one; start it fresh.
+    dispatch({ type: 'relief', value: { source: relief.source, invert: false, depthFloor: p.depth && cutout ? suggestFloor(base, cutout, relief) : 0 } });
     if (nextView) setView(nextView);
   }, [dispatch, say]);
 
@@ -197,16 +199,16 @@ export function DesignProvider({ children }: { children: React.ReactNode }) {
     await addImages(result.images.map((b, i) => new File([b], `pasted-${i + 1}.png`, { type: b.type })));
   }, [addImages, say]);
 
-  const judge = useCallback(async () => {
-    if (judging.current) return;
-    const todo = picturesRef.current.filter(p => !p.depth);
-    if (!todo.length) return;
-    if (!aiSupported()) return say('This browser cannot run the depth model (it needs Web Workers and OffscreenCanvas).');
+  /**
+   * Estimate depth for these pictures, one after another, keeping the model loaded between them.
+   * Resolves to the depth of each one that finished, and how it ended.
+   */
+  const estimate = useCallback(async (todo: Picture[], label: string): Promise<{ depths: Map<string, ReliefBase>; ended: 'done' | 'cancelled' | 'failed' | 'busy' }> => {
+    const depths = new Map<string, ReliefBase>();
+    if (judging.current) return { depths, ended: 'busy' };
     judging.current = true;
-    const label = 'Judging pictures';
     dispatch({ type: 'busy', label, progress: 1, status: `Starting the depth model on ${webGpuAvailable() ? 'the GPU' : 'the CPU (slower)'}…` });
     let current: Picture | null = null;
-    let done = 0;
     try {
       for (const [i, p] of todo.entries()) {
         current = p;
@@ -215,37 +217,75 @@ export function DesignProvider({ children }: { children: React.ReactNode }) {
         const out = await estimateDepth(dataUrlToFile(p.dataUrl, fileName(p)), (progress, status) => dispatch({ type: 'busy', label, progress: Math.round((i + progress / 100) / todo.length * 100), status: of + status }), { keepWorker: i < todo.length - 1 });
         const values = resampleGrid(normalizeDepth(out.values), out.width, out.height, p.width, p.height);
         const depth: ReliefBase = { source: 'depth', width: p.width, height: p.height, values };
+        depths.set(p.id, depth);
         setPictures(ps => ps.map(x => x.id === p.id ? { ...x, depth, state: 'ready', error: undefined } : x));
-        done++;
         // The picture in use gets its depth on the bench too, with the wall plane fitted to it.
         if (activeRef.current === p.id) {
           const cutout = picturesRef.current.find(x => x.id === p.id)?.mask ?? null;
           dispatch({ type: 'reliefBase', base: depth });
-          const relief = { ...settingsRef.current.relief, source: 'depth' as const, depthFloor: 0 };
-          dispatch({ type: 'relief', value: { source: 'depth', depthFloor: cutout ? suggestFloor(depth, cutout, relief) : 0 } });
+          const relief = { ...settingsRef.current.relief, source: 'depth' as const, invert: false, depthFloor: 0 };
+          dispatch({ type: 'relief', value: { source: 'depth', invert: false, depthFloor: cutout ? suggestFloor(depth, cutout, relief) : 0 } });
         }
       }
-      dispatch({ type: 'busy', label: null, progress: 100, status: `Judged ${plural(done, 'picture')}. Tap one to see how it carves.` });
+      dispatch({ type: 'busy', label: null, progress: 100 });
+      return { depths, ended: 'done' };
     } catch (e) {
       const cancelled = e instanceof Error && e.message === 'Cancelled';
       const failed = current;
       if (failed) setPictures(ps => ps.map(x => x.id === failed.id ? { ...x, state: cancelled ? 'new' : 'failed', error: cancelled ? undefined : (e instanceof Error ? e.message : String(e)) } : x));
-      say(aiFailure('Judging', e));
+      say(aiFailure(label === 'Judging pictures' ? 'Judging' : 'Depth', e));
+      return { depths, ended: cancelled ? 'cancelled' : 'failed' };
     } finally {
       resetAi();
       judging.current = false;
     }
   }, [dispatch, say]);
 
+  const judge = useCallback(async () => {
+    const todo = picturesRef.current.filter(p => !p.depth);
+    if (!todo.length) return;
+    if (!aiSupported()) return say('This browser cannot run the depth model (it needs Web Workers and OffscreenCanvas).');
+    const { depths, ended } = await estimate(todo, 'Judging pictures');
+    if (ended === 'done') say(`Judged ${plural(depths.size, 'picture')}. Tap one to see how it carves.`);
+  }, [estimate, say]);
+
   const use = useCallback(async (id: string) => {
-    const p = picturesRef.current.find(x => x.id === id);
+    let p = picturesRef.current.find(x => x.id === id);
     if (!p) return;
+    // Brightness is no stand-in for the shape of a drawn or photographed sculpture, so a picture
+    // that has not been judged gets its depth estimated before it goes into use.
+    let rough = '';
+    if (!p.depth && aiSupported()) {
+      const { depths, ended } = await estimate([p], 'Estimating depth');
+      if (ended === 'cancelled' || ended === 'busy') return;
+      const depth = depths.get(id);
+      if (depth) p = { ...p, depth, state: 'ready' };
+      else rough = ' Its depth could not be estimated, so brightness is standing in and the result will be rough. Try Estimate depth again.';
+    } else if (!p.depth) {
+      rough = ' This browser cannot estimate depth, so brightness is standing in and the result will be rough.';
+    }
     // With depth and a cutout it is ready to slice; without, the bench is where those get made.
     const ready = !!p.depth && !!p.mask;
     await activate(p, ready ? undefined : 'tune');
     setSelectedId(id);
-    say(ready ? `Using ${p.name}. Generate slices when you are ready.` : p.depth ? `Using ${p.name}. Next: cut out the subject.` : `Using ${p.name}. Next: estimate depth.`);
-  }, [activate, say]);
+    say(ready ? `Using ${p.name}. Generate slices when you are ready.` : p.depth ? `Using ${p.name}. Next: cut out the subject.` : `Using ${p.name}.${rough}`);
+  }, [activate, estimate, say]);
+
+  /** Turn a picture's depth inside out, for the rare one the depth model reads the wrong way round. */
+  const flipDepth = useCallback((id: string) => {
+    const p = picturesRef.current.find(x => x.id === id);
+    if (!p?.depth) return;
+    const values = new Float32Array(p.depth.values.length);
+    for (let i = 0; i < values.length; i++) values[i] = 1 - p.depth.values[i];
+    const depth: ReliefBase = { ...p.depth, values };
+    setPictures(ps => ps.map(x => x.id === id ? { ...x, depth } : x));
+    if (activeRef.current === id) {
+      dispatch({ type: 'reliefBase', base: depth });
+      const relief = { ...settingsRef.current.relief, source: 'depth' as const, invert: false, depthFloor: 0 };
+      dispatch({ type: 'relief', value: { source: 'depth', invert: false, depthFloor: p.mask ? suggestFloor(depth, p.mask, relief) : 0 } });
+    }
+    say(`Flipped the depth of ${p.name}: what was furthest is now closest.`);
+  }, [dispatch, say]);
 
   const useTopPick = useCallback(async () => {
     const best = topPick(picturesRef.current, settingsRef.current);
@@ -432,8 +472,8 @@ export function DesignProvider({ children }: { children: React.ReactNode }) {
     prompt, link, sent, handOff, openChatGpt, copyPrompt,
     angled: prefs.angled, setAngled: v => patchPrefs({ angled: v }),
     pictures, activeId, selectedId, select: setSelectedId, view, setView, waiting,
-    addImages, paste, judge, use, useTopPick, remove, removeOthers, forget, quarter, oddSplit, quarterLastSheet, clear, say
-  }), [prefs, patchPrefs, template, prompt, link, sent, handOff, openChatGpt, copyPrompt, pictures, activeId, selectedId, view, waiting, addImages, paste, judge, use, useTopPick, remove, removeOthers, forget, quarter, oddSplit, quarterLastSheet, clear, say]);
+    addImages, paste, judge, use, useTopPick, remove, flipDepth, removeOthers, forget, quarter, oddSplit, quarterLastSheet, clear, say
+  }), [prefs, patchPrefs, template, prompt, link, sent, handOff, openChatGpt, copyPrompt, pictures, activeId, selectedId, view, waiting, addImages, paste, judge, use, useTopPick, remove, flipDepth, removeOthers, forget, quarter, oddSplit, quarterLastSheet, clear, say]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

@@ -1,5 +1,6 @@
 import type { MeshModel, PipelineResult, ProjectSettings, ReliefBase } from '../types';
 import { composeHeightmap } from '../relief/heightmap';
+import { reliefWarnings } from '../relief/checks';
 import { resolveReliefSizing } from '../relief/sizing';
 import { runPipeline } from './pipeline';
 
@@ -24,7 +25,9 @@ export async function buildResult(source: BuildSource): Promise<PipelineResult> 
   if (settings.inputMode === 'relief') {
     if (!reliefBase) throw new Error('Load a photo before generating slices.');
     const heightmap = composeHeightmap(reliefBase, { settings: settings.relief, mask, preview: false });
-    return runPipeline({ settings: resolveReliefSizing(settings, heightmap), heightmap });
+    const result = await runPipeline({ settings: resolveReliefSizing(settings, heightmap), heightmap });
+    // A relief cut from the wrong depth wastes the sheet: say so at the top of the checks.
+    return { ...result, warnings: [...reliefWarnings(reliefBase, settings.relief, heightmap), ...result.warnings] };
   }
   return runPipeline({ settings, mesh });
 }

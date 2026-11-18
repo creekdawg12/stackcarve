@@ -215,6 +215,7 @@ function Inspector({ picture }: { picture: Picture }) {
         <Meter label="Sturdy" value={judgement.scores.sturdy} note={judgement.scores.notes.sturdy}/>
       </div>
       {judgement.scores.cropped && <p className="hint stale">The subject runs off the edge of the picture, so part of it would be cut flat.</p>}
+      {judgement.scores.insideOut && <p className="hint stale">The edges stand out further than the middle, so the depth probably came out inside out. <button type="button" className="link inline" onClick={() => d.flipDepth(picture.id)}>Flip the depth</button></p>}
       {plan && <dl className="facts">
         <div><dt>Pieces</dt><dd>{piecesText(plan)}</dd></div>
         <div><dt>Size</dt><dd>{num(plan.size.width)} × {num(plan.size.height)} in</dd></div>

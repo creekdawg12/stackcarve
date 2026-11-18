@@ -48,10 +48,11 @@ export function useNextAction(): { primary: NextAction; secondary: NextAction | 
     return { primary: judge, secondary: { label: 'Generate from the one in use', run: generate.run } };
   }
   // A photo works best with depth and a cutout; lead through them, but never block generating.
-  if (step === 'source' && photo && reliefBase && aiSupported()) {
+  if (photo && reliefBase && aiSupported()) {
     const skip: NextAction = { label: 'Generate without it', run: generate.run };
+    // On every step: without estimated depth the piece is cut from the picture's brightness, which is rarely its shape.
     if (reliefBase.source !== 'depth') return { primary: { label: 'Estimate depth', run: () => { void actions.runDepth(); } }, secondary: skip };
-    if (!mask) return { primary: { label: 'Cut out the subject', run: () => { void actions.runCutout(); } }, secondary: skip };
+    if (step === 'source' && !mask) return { primary: { label: 'Cut out the subject', run: () => { void actions.runCutout(); } }, secondary: skip };
   }
   return { primary: generate, secondary: null };
 }
